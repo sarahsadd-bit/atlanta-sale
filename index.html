@@ -187,11 +187,14 @@ const db = {
     } catch { return null; }
   },
   async saveItems(items) {
-    try {
-      await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-      if (items.length === 0) return;
-      await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, { method: "POST", headers: { ...sbHeaders, "Prefer": "return=minimal" }, body: JSON.stringify(items) });
-    } catch(e) { console.error(e); }
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, {
+      method: "POST",
+      headers: { ...sbHeaders, "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(items)
+    });
+    if (!r.ok) throw new Error(`saveItems failed: ${r.status}`);
+    const ids = items.map(i => i.id).join(",");
+    if (ids) await fetch(`${SUPABASE_URL}/rest/v1/sale_items?id=not.in.(${ids})`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
   },
   async getPhotos() {
     try {
@@ -201,12 +204,19 @@ const db = {
     } catch { return []; }
   },
   async savePhotos(photos) {
-    try {
+    if (photos.length === 0) {
       await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-      if (photos.length === 0) return;
-      const withOrder = photos.map((p, i) => ({ ...p, sort_order: i }));
-      await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, { method: "POST", headers: { ...sbHeaders, "Prefer": "return=minimal" }, body: JSON.stringify(withOrder) });
-    } catch(e) { console.error(e); }
+      return;
+    }
+    const withOrder = photos.map((p, i) => ({ ...p, sort_order: i }));
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, {
+      method: "POST",
+      headers: { ...sbHeaders, "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(withOrder)
+    });
+    if (!r.ok) throw new Error(`savePhotos failed: ${r.status}`);
+    const ids = photos.map(p => p.id).join(",");
+    if (ids) await fetch(`${SUPABASE_URL}/rest/v1/apt_photos?id=not.in.(${ids})`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
   },
 };
 
@@ -363,6 +373,7 @@ function PublicSite({ items, photos, settings, onAdminClick, onGalleryClick }) {
     return matchRoom && matchSearch;
   }), [items, roomFilter, search]);
 
+  const allRooms = useMemo(() => [...new Set(items.map(i => i.room))], [items]);
   const rooms = useMemo(() => [...new Set(filtered.map(i => i.room))], [filtered]);
   const available = items.filter(i => i.status === "available").length;
   const sold = items.filter(i => i.status === "sold").length;
@@ -396,7 +407,7 @@ function PublicSite({ items, photos, settings, onAdminClick, onGalleryClick }) {
         <div style={S.filterRow}>
           <span style={S.filterLabel}>Room:</span>
           <button style={S.filterBtn(roomFilter === "all")} onClick={() => setRoomFilter("all")}>All</button>
-          {ROOMS.map(r => <button key={r} style={S.filterBtn(roomFilter === r)} onClick={() => setRoomFilter(r)}>{r}</button>)}
+          {allRooms.map(r => <button key={r} style={S.filterBtn(roomFilter === r)} onClick={() => setRoomFilter(r)}>{r}</button>)}
         </div>
       </div>
 
@@ -494,6 +505,7 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
   const [localSettings, setLocalSettings] = useState({ ...settings });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [roomFilter, setRoomFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -535,13 +547,24 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
   }
   function updatePhotoCaption(id, caption) { setLocalPhotos(prev => prev.map(p => p.id === id ? { ...p, caption } : p)); setSaved(false); }
 
-  function handleSave() {
+  async function handleSave() {
     setSaving(true);
-    saveItems(localItems);
-    savePhotos(localPhotos);
-    saveSettings(localSettings);
-    setSaving(false); setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaved(false);
+    setSaveError(false);
+    try {
+      await Promise.all([
+        saveItems(localItems),
+        savePhotos(localPhotos),
+        saveSettings(localSettings),
+      ]);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 4000);
+    } catch(e) {
+      console.error("Save failed:", e);
+      setSaveError(true);
+      setTimeout(() => setSaveError(false), 6000);
+    }
+    setSaving(false);
   }
 
   function addItem() {
@@ -564,7 +587,7 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
       <div style={S.adminHeader}>
         <h1 style={S.adminTitle}>Sale Admin</h1>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button onClick={handleSave} style={{ ...S.adminSaveBtn, background: saved ? "#1A5C2A" : "#1C1C1A" }}>{saving ? "Saving…" : saved ? "Saved ✓" : "Save All"}</button>
+          <button onClick={handleSave} style={{ ...S.adminSaveBtn, background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>{saving ? "Saving…" : saveError ? "Save Failed ✗" : saved ? "Saved ✓" : "Save All"}</button>
           <button onClick={onBack} style={{ ...S.adminSaveBtn, background: "#4A4A44" }}>← Public View</button>
         </div>
       </div>
@@ -661,8 +684,8 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
             </div>
           ))}
           <div style={{ marginTop: "24px" }}>
-            <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem", background: saved ? "#1A5C2A" : "#1C1C1A" }}>
-              {saving ? "Saving…" : saved ? "Saved ✓" : "Save Settings"}
+            <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem", background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>
+              {saving ? "Saving…" : saveError ? "Save Failed — Try Again" : saved ? "Saved ✓" : "Save Settings"}
             </button>
           </div>
         </div>
@@ -684,7 +707,11 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
             <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>New Item</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" }}>
               <div><div style={S.adminLabel}>Name</div><input style={S.adminInput} value={newItem.name} onChange={e => setNewItem(p => ({ ...p, name: e.target.value }))} placeholder="Item name" /></div>
-              <div><div style={S.adminLabel}>Room</div><select style={S.adminSelect} value={newItem.room} onChange={e => setNewItem(p => ({ ...p, room: e.target.value }))}>{ROOMS.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+              <div>
+                <div style={S.adminLabel}>Room / Category</div>
+                <input style={S.adminInput} list="room-options" value={newItem.room} onChange={e => setNewItem(p => ({ ...p, room: e.target.value }))} placeholder="Select or type a new category" />
+                <datalist id="room-options">{[...new Set(localItems.map(i => i.room))].map(r => <option key={r} value={r} />)}</datalist>
+              </div>
               <div><div style={S.adminLabel}>Retail $</div><input style={S.adminInput} type="number" value={newItem.retail} onChange={e => setNewItem(p => ({ ...p, retail: e.target.value }))} /></div>
               <div><div style={S.adminLabel}>Sale $</div><input style={S.adminInput} type="number" value={newItem.sale} onChange={e => setNewItem(p => ({ ...p, sale: e.target.value }))} /></div>
               <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={newItem.photo} onChange={e => setNewItem(p => ({ ...p, photo: normalizePhotoUrl(e.target.value) }))} placeholder="https://…" /></div>
@@ -732,10 +759,8 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
                 <button onClick={() => deleteItem(item.id)} style={{ ...S.adminDeleteBtn, flexShrink: 0, marginTop: "18px" }}>✕</button>
               </div>
               <div>
-                <div style={S.adminLabel}>Room</div>
-                <select style={S.adminSelect} value={item.room} onChange={e => updateItem(item.id, "room", e.target.value)}>
-                  {ROOMS.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
+                <div style={S.adminLabel}>Room / Category</div>
+                <input style={S.adminInput} list="room-options" value={item.room} onChange={e => updateItem(item.id, "room", e.target.value)} placeholder="Select or type new" />
               </div>
               <div><div style={S.adminLabel}>Status</div>
                 <select style={S.adminSelect} value={item.status} onChange={e => updateItem(item.id, "status", e.target.value)}>
@@ -756,8 +781,8 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
         </div>
 
         <div style={{ padding: "20px", textAlign: "center" }}>
-          <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem" }}>
-            {saving ? "Saving…" : saved ? "All Changes Saved ✓" : "Save All Changes"}
+          <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem", background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>
+            {saving ? "Saving…" : saveError ? "Save Failed — Try Again" : saved ? "All Changes Saved ✓" : "Save All Changes"}
           </button>
         </div>
       </div>}
