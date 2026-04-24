@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Home Furnishings Sale · Atlanta, GA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #FAFAF8; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const ADMIN_PASSWORD = "rth2025";
+const PICKUP_DEADLINE = "May 28, 2025";
+const OPEN_HOUSE = "May 16–17, 10am–4pm";
+
+const INITIAL_ITEMS = [
+  { id:1,  room:"Entry & Kitchen", name:"Wall Treatment", retail:1500, sale:750, deposit:300, large:true, status:"available", photo:"", link:"" },
+  { id:2,  room:"Entry & Kitchen", name:"Entry Rug & Pad", retail:169, sale:85, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/handspun-jute-rug-natural?variant=47064747278392" },
+  { id:3,  room:"Entry & Kitchen", name:"Kitchen Rug & Pad", retail:80, sale:40, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/araya-spill-proof-washable-rug-green-runner?variant=48333820264504" },
+  { id:4,  room:"Entry & Kitchen", name:"Foot Stool / Ottoman", retail:90, sale:45, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:5,  room:"Entry & Kitchen", name:"Shoe Cabinet", retail:167, sale:85, deposit:34, large:true, status:"available", photo:"", link:"" },
+  { id:6,  room:"Entry & Kitchen", name:"Entry Mirror (West Elm)", retail:199, sale:100, deposit:0, large:false, status:"available", photo:"", link:"https://www.westelm.com/products/metal-framed-mirror-circle-w1612/?pkey=sWE&sb=WE" },
+  { id:7,  room:"Entry & Kitchen", name:"Coat Rack", retail:25, sale:15, deposit:0, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B005M8YWOK?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_3&th=1" },
+  { id:8,  room:"Entry & Kitchen", name:"Pendant Lights (Brass/Black)", retail:400, sale:200, deposit:80, large:false, status:"available", photo:"", link:"https://www.shadesoflight.com/products/bentlee-pendant?color=brass-black&filterFinish=Brass" },
+  { id:9,  room:"Entry & Kitchen", name:"Counter Stools (set of 2)", retail:518, sale:260, deposit:104, large:false, status:"available", photo:"", link:"https://www.allmodern.com/furniture/pdp/allmodern-nia-vegan-leather-bar-counter-stool-a001091363.html?piid=166368840%2C159509508%2C240643098" },
+  { id:10, room:"Entry & Kitchen", name:"Kohler Step Trash Can (47L)", retail:99, sale:50, deposit:0, large:false, status:"available", photo:"", link:"https://www.costco.com/p/-/kohler-47l-step-trash-can/4000277848?langId=-1" },
+  { id:11, room:"Entry & Kitchen", name:"Our Place Wonder Oven (Air Fryer)", retail:129, sale:75, deposit:0, large:false, status:"available", photo:"", link:"https://fromourplace.com/products/wonder-oven?variant=43276070715586" },
+  { id:12, room:"Entry & Kitchen", name:"Espresso Machine", retail:664, sale:350, deposit:140, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B00CH9QWOU?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13&th=1" },
+  { id:13, room:"Entry & Kitchen", name:"Vitamix Blender", retail:479, sale:250, deposit:100, large:false, status:"available", photo:"", link:"https://a.co/d/01toCVrJ" },
+  { id:14, room:"Entry & Kitchen", name:"Instant Pot", retail:139, sale:70, deposit:0, large:false, status:"available", photo:"", link:"https://a.co/d/02C07ait" },
+  { id:15, room:"Entry & Kitchen", name:"Food Processor", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:16, room:"Entry & Kitchen", name:"Crockpot", retail:60, sale:30, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:17, room:"Entry & Kitchen", name:"Dishes (full set)", retail:250, sale:100, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:18, room:"Entry & Kitchen", name:"Glassware (full set)", retail:150, sale:60, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:19, room:"Entry & Kitchen", name:"Flatware (full set)", retail:80, sale:40, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:20, room:"Entry & Kitchen", name:"Bakeware", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:21, room:"Entry & Kitchen", name:"Cooking Utensils", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:22, room:"Entry & Kitchen", name:"Pantry Shelf", retail:105, sale:55, deposit:22, large:true, status:"available", photo:"", link:"https://www.amazon.com/dp/B0CCHQR1XZ?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_4&th=1" },
+  { id:23, room:"Living Room", name:"West Elm Harmony Sofa", retail:2499, sale:1200, deposit:480, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/harmony-sofa-h2479/?pkey=sWE&sb=WE" },
+  { id:24, room:"Living Room", name:"West Elm Swivel Chair (Viv Grand)", retail:949, sale:475, deposit:190, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/viv-grand-swivel-chair-h9536/?pkey=sWE&sb=WE" },
+  { id:25, room:"Living Room", name:"West Elm Coffee Table (Graphic Stripes)", retail:2799, sale:1400, deposit:560, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/mp-graphic-stripes-coffee-table--short-h10420/" },
+  { id:26, room:"Living Room", name:"Corner Bookshelf (4 Shelves)", retail:827, sale:400, deposit:160, large:true, status:"available", photo:"", link:"https://www.litfad.com/contemporary-wooden-bookshelf-corner-4-shelves-closed-back-bookcase-s-3264166.html" },
+  { id:27, room:"Living Room", name:"West Elm Brynn Floor Lamp", retail:449, sale:225, deposit:90, large:false, status:"available", photo:"", link:"https://www.westelm.com/products/brynn-floor-lamp-w4698/?pkey=sWE&sb=WE" },
+  { id:28, room:"Living Room", name:"West Elm Pictograph Credenza", retail:1597, sale:800, deposit:320, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/pictograph-buffet-h3356/" },
+  { id:29, room:"Living Room", name:"Living Room Rug & Pad (Rust)", retail:250, sale:125, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/katana-collage-washable-rug-rust?variant=47055569551416" },
+  { id:30, room:"Living Room", name:"Samsung Frame TV (55\")", retail:997, sale:600, deposit:240, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B09VCVGH7B?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_1" },
+  { id:31, room:"Living Room", name:"Ceiling Fan w/ Light (Fandelier)", retail:164, sale:80, deposit:0, large:false, status:"available", photo:"", link:"https://www.wayfair.com/lighting/pdp/willa-arlo-interiors-18-windermere-caged-crystal-ceiling-fan-with-light-and-remote-w009558805.html?piid=807180867" },
+  { id:32, room:"Living Room", name:"Full Length Mirror", retail:100, sale:50, deposit:0, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B0CNSWM88Z?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_2&th=1" },
+  { id:33, room:"Primary Bedroom", name:"West Elm Mid-Century Canopy Bed", retail:1499, sale:750, deposit:300, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/mid-century-canopy-bed-acorn-h5873/" },
+  { id:34, room:"Primary Bedroom", name:"Mattress", retail:850, sale:425, deposit:170, large:true, status:"available", photo:"", link:"" },
+  { id:35, room:"Primary Bedroom", name:"West Elm Otto Nightstands (pair)", retail:1198, sale:600, deposit:240, large:false, status:"available", photo:"", link:"https://www.westelm.com/products/otto-nightstand-h11745/" },
+  { id:36, room:"Primary Bedroom", name:"Bedroom Rug & Pad (Black Moroccan)", retail:260, sale:130, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/shaggy-moroccan-lattice-fringe-rug-black?variant=47065142263864" },
+  { id:37, room:"Primary Bedroom", name:"West Elm Ellington 6-Drawer Dresser", retail:1899, sale:950, deposit:380, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/ellington-6-drawer-dresser-h10479/" },
+  { id:38, room:"Primary Bedroom", name:"West Elm Circle Mirror", retail:359, sale:180, deposit:0, large:false, status:"available", photo:"", link:"https://www.westelm.com/products/modern-hanging-mirror-w2416/" },
+  { id:39, room:"Primary Bedroom", name:"Rattan Fandelier", retail:122, sale:60, deposit:0, large:false, status:"available", photo:"", link:"https://www.lowes.com/pd/Antoine-Farmhouse-Rattan-Low-Profile-20-in-Caged-Bedroom-Black-Indoor-Fandelier-Ceiling-Fan-with-Light-Remote-7-Blade/5014800603" },
+  { id:40, room:"Primary Bedroom", name:"Peel & Stick Grasscloth Wallpaper", retail:500, sale:200, deposit:0, large:false, status:"available", photo:"", link:"https://tempaper.com/products/faux-horizontal-grasscloth-peel-and-stick-wallpaper?variant=42174227087542" },
+  { id:41, room:"Primary Bedroom", name:"Curtain Rod & Curtains", retail:106, sale:55, deposit:0, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B0CPLFV36Y?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_5&th=1" },
+  { id:42, room:"Primary Closet", name:"West Elm Margot Raffia 6-Drawer Dresser", retail:1599, sale:800, deposit:320, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/margot-raffia-6-drawer-dresser-h5645/?pkey=cfurniture&sb=WE" },
+  { id:43, room:"Primary Closet", name:"Storage Boxes (set)", retail:129, sale:65, deposit:0, large:false, status:"available", photo:"", link:"https://www.tiktok.com/t/ZP98qPWHFLuck-XSYUj/" },
+  { id:44, room:"Primary Closet", name:"Wooden Hangers (set)", retail:31, sale:15, deposit:0, large:false, status:"available", photo:"", link:"https://www.amazon.com/TOPIA-HANGER-Hangers-Shoulder-Camisole/dp/B09SB46YXH/" },
+  { id:45, room:"Primary Closet", name:"Closet Rug & Pad (Peach Runner)", retail:99, sale:50, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/rosette-medallion-spill-proof-washable-rug-peach-runner?variant=48452416340024" },
+  { id:46, room:"Primary Bathroom", name:"Bathroom Rug", retail:60, sale:30, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/dorinda-hazy-solid-indoor-outdoor-rug-brown?variant=47065087443000" },
+  { id:47, room:"Primary Bathroom", name:"Linen Shower Curtain", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:48, room:"Primary Bathroom", name:"Teak Bench", retail:60, sale:30, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:49, room:"Primary Bathroom", name:"Tushy Bidet", retail:129, sale:65, deposit:0, large:false, status:"available", photo:"", link:"https://hellotushy.com/products/classic-affordable-bidet?variant=32135870906410" },
+  { id:50, room:"Primary Bathroom", name:"Wall Shelf", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:51, room:"Primary Bathroom", name:"Teak Bathroom Accessory Set", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"https://www.bedbathandbeyond.com/Bedding-Bath/Seville-Classics-5-Piece-Bamboo-Luxury-Vanity-Bathroom-Accessory-Set/36143845/product.html?option=69885205" },
+  { id:52, room:"Guest Bedroom / Office", name:"Joybird Briar Sleeper Sofa (Teal)", retail:2399, sale:1200, deposit:480, large:true, status:"available", photo:"", link:"https://joybird.com/sleeper-sofas/briar-sleeper-sofa/?fabric=key_largo_zenith_teal&wood_stain=mocha&mattress=standard_foam" },
+  { id:53, room:"Guest Bedroom / Office", name:"Office Rug & Pad", retail:320, sale:160, deposit:0, large:false, status:"available", photo:"", link:"https://www.westelm.com/products/larkin-rug-t6865/" },
+  { id:54, room:"Guest Bedroom / Office", name:"West Elm Parker Desk w/ Risers", retail:899, sale:450, deposit:180, large:true, status:"available", photo:"", link:"https://www.westelm.com/products/parker-desk-h12355/?pkey=cfurniture&sb=WE" },
+  { id:55, room:"Guest Bedroom / Office", name:"Pipersong Pro Desk Chair", retail:299, sale:150, deposit:60, large:false, status:"available", photo:"", link:"https://pipersong.com/products/pipersong-pro" },
+  { id:56, room:"Guest Bedroom / Office", name:"Glass Monitor Riser / TV Stand", retail:178, sale:90, deposit:36, large:false, status:"available", photo:"", link:"https://www.wayfair.com/furniture/pdp/orren-ellis-zepeda-tv-stand-for-tvs-up-to-32-w000171351.html?piid=586956711%2C608046632" },
+  { id:57, room:"Guest Bedroom / Office", name:"LG Ultrawide Monitor (34\")", retail:300, sale:200, deposit:80, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B0BQQ7H8TZ?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_1&th=1" },
+  { id:58, room:"Guest Bedroom / Office", name:"Bookshelf", retail:150, sale:75, deposit:30, large:true, status:"available", photo:"", link:"" },
+  { id:59, room:"Guest Bedroom / Office", name:"IKEA HOVET Full Length Mirror", retail:169, sale:85, deposit:0, large:false, status:"available", photo:"", link:"https://www.ikea.com/us/en/p/hovet-mirror-aluminum-40507196/" },
+  { id:60, room:"Guest Bedroom / Office", name:"Acoustic Wall Paneling (Woodupp)", retail:1150, sale:575, deposit:230, large:false, status:"available", photo:"", link:"https://woodupp.com/us/product/akupanel/?attribute_pa_color=classic-oak-grey-felt" },
+  { id:61, room:"Guest Bedroom / Office", name:"Lamp", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:62, room:"Guest Bedroom / Office", name:"Chandelier (Industrial)", retail:247, sale:125, deposit:50, large:false, status:"available", photo:"", link:"https://www.amazon.com/Chandelier-Lighting-Industrial-Compatible-Mid-Century/dp/B0CMLCYGW8?th=1" },
+  { id:63, room:"Guest Bedroom / Office", name:"Curtain Rod & Curtains", retail:80, sale:40, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:64, room:"Guest Bedroom / Office", name:"IKEA KALLAX Closet Cabinet w/ Doors", retail:85, sale:45, deposit:18, large:true, status:"available", photo:"", link:"https://www.ikea.com/us/en/p/kallax-shelf-unit-with-doors-white-stained-oak-effect-s59197453/" },
+  { id:65, room:"Guest Bedroom / Office", name:"Safe", retail:92, sale:50, deposit:20, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B01BGY043Q?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_2&th=1" },
+  { id:66, room:"Guest Bathroom", name:"Bathroom Rug", retail:60, sale:30, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/dorinda-hazy-solid-indoor-outdoor-rug-brown?variant=47065087443000" },
+  { id:67, room:"Guest Bathroom", name:"Linen Shower Curtain", retail:80, sale:40, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:68, room:"Guest Bathroom", name:"Wall Shelf", retail:50, sale:25, deposit:0, large:false, status:"available", photo:"", link:"" },
+  { id:69, room:"Patio", name:"Egg Chair (Threshold, Black)", retail:575, sale:290, deposit:116, large:true, status:"available", photo:"", link:"https://www.target.com/p/southport-steel-outdoor-patio-egg-chair-black-threshold-8482/-/A-88377472" },
+  { id:70, room:"Patio", name:"Outdoor Rug (Black)", retail:120, sale:60, deposit:0, large:false, status:"available", photo:"", link:"https://www.rugsusa.com/products/iris-totem-indoor-outdoor-flatweave-rug-black?variant=47053980893240" },
+  { id:71, room:"Patio", name:"Outdoor Chairs (set)", retail:200, sale:100, deposit:40, large:false, status:"available", photo:"", link:"https://www.amazon.com/dp/B08ZK324JS/ref=dp_iou_view_item?ie=UTF8&psc=1" },
+  { id:72, room:"Plants", name:"17 Houseplants (EasyPlant, various)", retail:1153, sale:400, deposit:0, large:false, status:"available", photo:"", link:"https://easyplant.com/" },
+  { id:73, room:"Miscellaneous", name:"Mac Sports XL Folding Wagon", retail:99, sale:50, deposit:0, large:false, status:"available", photo:"", link:"https://www.costco.com/p/-/mac-sports-xl-folding-wagon-with-brakes/4000424138" },
+];
+
+const ROOMS = [...new Set(INITIAL_ITEMS.map(i => i.room))];
+const fmt = n => "$" + Number(n).toLocaleString();
+const pct = (sale, retail) => Math.round(((retail - sale) / retail) * 100);
+
+const STATUS_CONFIG = {
+  available: { label: "Available", bg: "#EAF2EC", color: "#1A5C2A", border: "#B0D4BA" },
+  deposit:   { label: "Deposit Taken", bg: "#FEF3EE", color: "#8A3318", border: "#F0C4A8" },
+  sold:      { label: "Sold", bg: "#F2F2F0", color: "#4A4A44", border: "#C8C4BC" },
+};
+
+const S = {
+  page: { fontFamily: "'DM Sans','Helvetica Neue',sans-serif", background: "#FAFAF8", minHeight: "100vh", color: "#1C1C1A" },
+  hero: { background: "#2A2A26", color: "#FAFAF8", padding: "56px 24px 44px", textAlign: "center" },
+  heroTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "clamp(2.2rem,8vw,4rem)", fontWeight: 400, lineHeight: 1.05, margin: 0, letterSpacing: "-0.01em" },
+  heroItalic: { fontStyle: "italic", color: "#D4A896" },
+  heroSub: { fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "#9A9A90", margin: "10px 0 0" },
+  pills: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "8px", marginTop: "22px" },
+  pill: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "3px", padding: "6px 16px", fontSize: "0.72rem", letterSpacing: "0.06em", color: "#C8C8C0" },
+  notice: { background: "rgba(196,82,42,0.12)", border: "1px solid rgba(196,82,42,0.3)", borderRadius: "4px", padding: "14px 20px", fontSize: "0.78rem", maxWidth: "480px", margin: "20px auto 0", lineHeight: 1.75, color: "#E8D4CC" },
+  noticeStrong: { color: "#E8956A", fontWeight: 600 },
+  filterBar: { background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "12px 16px", position: "sticky", top: 0, zIndex: 90, overflowX: "auto" },
+  filterRow: { display: "flex", gap: "6px", minWidth: "max-content", alignItems: "center" },
+  filterLabel: { fontSize: "0.67rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "#6B6B65", marginRight: "4px", whiteSpace: "nowrap" },
+  filterBtn: active => ({ background: active ? "#1C1C1A" : "transparent", border: `1px solid ${active ? "#1C1C1A" : "#C8C4BC"}`, borderRadius: "3px", padding: "5px 14px", fontSize: "0.72rem", letterSpacing: "0.04em", color: active ? "#FAFAF8" : "#4A4A44", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }),
+  searchWrap: { background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "10px 16px" },
+  searchInput: { width: "100%", background: "#FAFAF8", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "10px 14px", fontFamily: "inherit", fontSize: "0.88rem", color: "#1C1C1A", outline: "none", boxSizing: "border-box" },
+  statsBar: { background: "#C4522A", color: "#FAFAF8", padding: "9px 20px", textAlign: "center", fontSize: "0.72rem", letterSpacing: "0.12em", textTransform: "uppercase" },
+  roomHeader: { background: "#F2EFE9", borderTop: "1px solid #E0DBD3", borderBottom: "1px solid #E0DBD3", padding: "14px 20px", display: "flex", alignItems: "center", gap: "10px" },
+  roomTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.3rem", fontWeight: 400, flex: 1, margin: 0, color: "#1C1C1A" },
+  roomCount: { fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#8A8A82" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))" },
+  card: status => ({ borderBottom: "1px solid #EDE9E3", borderRight: "1px solid #EDE9E3", padding: "18px 18px 16px", background: status === "sold" ? "#F5F3F0" : "#FFFFFF", opacity: status === "sold" ? 0.6 : 1, position: "relative", display: "flex", flexDirection: "column", gap: "10px" }),
+  photoBox: { width: "100%", height: "160px", background: "#F2EFE9", borderRadius: "3px", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  photoImg: { width: "100%", height: "100%", objectFit: "cover", borderRadius: "3px" },
+  photoPlaceholder: { fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#A8A49C" },
+  itemName: { fontSize: "0.95rem", fontWeight: 500, color: "#1C1C1A", lineHeight: 1.35 },
+  itemLink: { color: "#C4522A", fontSize: "0.68rem", marginLeft: "7px", textDecoration: "none", verticalAlign: "middle" },
+  metaRow: { display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" },
+  badge: cfg => ({ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`, borderRadius: "3px", padding: "3px 10px", fontSize: "0.65rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 500 }),
+  depositBadge: { background: "#F0E6DF", color: "#8A3318", border: "1px solid #DFC0B0", borderRadius: "3px", padding: "3px 10px", fontSize: "0.65rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 500 },
+  pickupNote: { fontSize: "0.67rem", color: "#8A8A82" },
+  priceBlock: { display: "flex", alignItems: "baseline", gap: "8px", marginTop: "auto", paddingTop: "4px" },
+  salePrice: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.6rem", fontWeight: 400, color: "#1C1C1A", letterSpacing: "-0.01em" },
+  origPrice: { fontSize: "0.75rem", color: "#9A9A90", textDecoration: "line-through" },
+  savingsPct: { fontSize: "0.72rem", color: "#C4522A", fontWeight: 600 },
+  soldStamp: { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%) rotate(-10deg)", fontFamily: "'DM Sans',sans-serif", fontSize: "1rem", fontWeight: 600, letterSpacing: "0.25em", color: "#6B6B65", border: "2px solid #6B6B65", padding: "4px 14px", opacity: 0.4, pointerEvents: "none", whiteSpace: "nowrap", textTransform: "uppercase", borderRadius: "2px" },
+  footer: { background: "#2A2A26", color: "#FAFAF8", padding: "40px 24px", textAlign: "center" },
+  footerTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.6rem", fontWeight: 400, margin: "0 0 12px", color: "#FAFAF8" },
+  footerText: { fontSize: "0.8rem", lineHeight: 1.85, color: "#9A9A90", maxWidth: "380px", margin: "0 auto" },
+  payRow: { display: "flex", justifyContent: "center", gap: "8px", marginTop: "16px", flexWrap: "wrap" },
+  payPill: { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "3px", padding: "6px 16px", fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#C8C8C0" },
+  adminWrap: { fontFamily: "'DM Sans','Helvetica Neue',sans-serif", background: "#F2EFE9", minHeight: "100vh", color: "#1C1C1A" },
+  adminHeader: { background: "#2A2A26", borderBottom: "1px solid #3A3A34", padding: "16px 20px", display: "flex", alignItems: "center", gap: "12px" },
+  adminTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.4rem", fontWeight: 400, flex: 1, margin: 0, color: "#FAFAF8" },
+  adminGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: "1px", background: "#E0DBD3" },
+  adminCard: { background: "#FAFAF8", padding: "16px 18px", display: "flex", flexDirection: "column", gap: "10px" },
+  adminCardName: { fontSize: "0.88rem", fontWeight: 500, color: "#1C1C1A" },
+  adminCardRoom: { fontSize: "0.67rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82" },
+  adminInput: { background: "#FFFFFF", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "7px 10px", color: "#1C1C1A", fontFamily: "inherit", fontSize: "0.82rem", width: "100%", boxSizing: "border-box" },
+  adminSelect: { background: "#FFFFFF", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "7px 10px", color: "#1C1C1A", fontFamily: "inherit", fontSize: "0.82rem", width: "100%", boxSizing: "border-box" },
+  adminLabel: { fontSize: "0.64rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82", marginBottom: "4px" },
+  adminRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" },
+  adminSaveBtn: { background: "#1C1C1A", border: "none", borderRadius: "4px", padding: "8px 18px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.08em", cursor: "pointer", textTransform: "uppercase" },
+  adminAddBtn: { background: "#C4522A", border: "none", borderRadius: "4px", padding: "8px 18px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.08em", cursor: "pointer", textTransform: "uppercase" },
+  adminDeleteBtn: { background: "transparent", border: "1px solid #E0DBD3", borderRadius: "4px", padding: "5px 10px", color: "#8A8A82", fontFamily: "inherit", fontSize: "0.7rem", cursor: "pointer" },
+  loginWrap: { background: "#F2EFE9", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" },
+  loginBox: { background: "#FFFFFF", border: "1px solid #E0DBD3", borderRadius: "6px", padding: "40px 36px", width: "300px", textAlign: "center" },
+  loginTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.7rem", fontWeight: 400, color: "#1C1C1A", marginBottom: "6px" },
+  loginSub: { fontSize: "0.7rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "#8A8A82", marginBottom: "28px" },
+  loginInput: { background: "#FAFAF8", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "11px 14px", color: "#1C1C1A", fontFamily: "inherit", fontSize: "0.9rem", width: "100%", boxSizing: "border-box", marginBottom: "12px", outline: "none" },
+  loginBtn: { background: "#1C1C1A", border: "none", borderRadius: "4px", padding: "11px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.85rem", letterSpacing: "0.08em", cursor: "pointer", width: "100%", textTransform: "uppercase" },
+  loginErr: { color: "#C4522A", fontSize: "0.76rem", marginTop: "10px", fontWeight: 500 },
+};
+
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://rtrvurfpmsvyjophajdl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_cLaNvP11cxHSytB6W61jmA_Zswi44Dw";
+const sbHeaders = { "Content-Type": "application/json", "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` };
+
+const db = {
+  async getItems() {
+    try {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/sale_items?select=*&order=id.asc`, { headers: sbHeaders });
+      const data = await r.json();
+      return Array.isArray(data) && data.length > 0 ? data : null;
+    } catch { return null; }
+  },
+  async saveItems(items) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
+      if (items.length === 0) return;
+      await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, { method: "POST", headers: { ...sbHeaders, "Prefer": "return=minimal" }, body: JSON.stringify(items) });
+    } catch(e) { console.error(e); }
+  },
+  async getPhotos() {
+    try {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/apt_photos?select=*&order=sort_order.asc`, { headers: sbHeaders });
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    } catch { return []; }
+  },
+  async savePhotos(photos) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
+      if (photos.length === 0) return;
+      const withOrder = photos.map((p, i) => ({ ...p, sort_order: i }));
+      await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, { method: "POST", headers: { ...sbHeaders, "Prefer": "return=minimal" }, body: JSON.stringify(withOrder) });
+    } catch(e) { console.error(e); }
+  },
+};
+
+function normalizeDropbox(url) {
+  if (!url) return url;
+  if (url.includes("dropbox.com")) {
+    return url
+      .replace("www.dropbox.com", "dl.dropboxusercontent.com")
+      .replace(/[?&]dl=\d/, "")
+      .replace(/[?&]raw=\d/, "");
+  }
+  return url;
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [view, setView] = useState("public");
+  const [items, setItems] = useState([]);
+  const [photos, setPhotos] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      const [dbItems, dbPhotos] = await Promise.all([db.getItems(), db.getPhotos()]);
+      setItems(dbItems || INITIAL_ITEMS);
+      setPhotos(dbPhotos || []);
+      setLoaded(true);
+    }
+    load();
+  }, []);
+
+  async function saveItems(v) { setItems(v); await db.saveItems(v); }
+  async function savePhotos(v) { setPhotos(v); await db.savePhotos(v); }
+
+  if (!loaded) return <div style={{ background: "#FAFAF8", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#8A8A82", fontFamily: "'DM Sans',sans-serif", fontSize: "0.85rem", letterSpacing: "0.1em", textTransform: "uppercase" }}>Loading…</div>;
+
+  if (view === "login") return <AdminLogin onSuccess={() => setView("admin")} onBack={() => setView("public")} />;
+  if (view === "admin") return <AdminPanel items={items} saveItems={saveItems} photos={photos} savePhotos={savePhotos} onBack={() => setView("public")} />;
+  return <PublicSite items={items} photos={photos} onAdminClick={() => setView("login")} />;
+}
+
+// ─── HERO GALLERY ─────────────────────────────────────────────────────────────
+function HeroGallery({ photos }) {
+  const [current, setCurrent] = useState(0);
+  const [fade, setFade] = useState(true);
+
+  useEffect(() => {
+    if (photos.length <= 1) return;
+    const t = setInterval(() => {
+      setFade(false);
+      setTimeout(() => { setCurrent(c => (c + 1) % photos.length); setFade(true); }, 400);
+    }, 4500);
+    return () => clearInterval(t);
+  }, [photos.length]);
+
+  function goTo(i) { setFade(false); setTimeout(() => { setCurrent(i); setFade(true); }, 250); }
+
+  const photo = photos[current];
+  return (
+    <div style={{ background: "#1C1C1A" }}>
+      <div style={{ width: "100%", height: "clamp(240px,55vw,540px)", overflow: "hidden", position: "relative" }}>
+        <img src={photo.url} alt={photo.caption || ""} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: fade ? 1 : 0, transition: "opacity 0.4s ease", display: "block" }} onError={e => e.target.style.opacity = 0.1} />
+        {photo.caption && (
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(28,28,26,0.75))", padding: "40px 24px 18px" }}>
+            <p style={{ margin: 0, color: "#F2EFE9", fontSize: "0.82rem", letterSpacing: "0.06em" }}>{photo.caption}</p>
+          </div>
+        )}
+        {photos.length > 1 && <>
+          <button onClick={() => goTo((current - 1 + photos.length) % photos.length)} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", background: "rgba(250,250,248,0.15)", border: "1px solid rgba(250,250,248,0.25)", color: "#FAFAF8", borderRadius: "3px", width: "36px", height: "36px", cursor: "pointer", fontSize: "1.1rem" }}>‹</button>
+          <button onClick={() => goTo((current + 1) % photos.length)} style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", background: "rgba(250,250,248,0.15)", border: "1px solid rgba(250,250,248,0.25)", color: "#FAFAF8", borderRadius: "3px", width: "36px", height: "36px", cursor: "pointer", fontSize: "1.1rem" }}>›</button>
+        </>}
+      </div>
+      {photos.length > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", gap: "8px", padding: "12px 0 14px", background: "#2A2A26" }}>
+          {photos.map((_, i) => (
+            <button key={i} onClick={() => goTo(i)} style={{ width: i === current ? "20px" : "8px", height: "8px", borderRadius: "4px", background: i === current ? "#C4522A" : "rgba(250,250,248,0.3)", border: "none", cursor: "pointer", padding: 0, transition: "all 0.3s ease" }} />
+          ))}
+        </div>
+      )}
+      <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.1rem", color: "#1C1C1A" }}>The Space</span>
+        <span style={{ fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#8A8A82" }}>{current + 1} / {photos.length}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── PUBLIC SITE ──────────────────────────────────────────────────────────────
+function PublicSite({ items, photos, onAdminClick }) {
+  const [roomFilter, setRoomFilter] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => items.filter(item => {
+    const matchRoom = roomFilter === "all" || item.room === roomFilter;
+    const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase()) || item.room.toLowerCase().includes(search.toLowerCase());
+    return matchRoom && matchSearch;
+  }), [items, roomFilter, search]);
+
+  const rooms = useMemo(() => [...new Set(filtered.map(i => i.room))], [filtered]);
+  const available = items.filter(i => i.status === "available").length;
+  const sold = items.filter(i => i.status === "sold").length;
+
+  return (
+    <div style={S.page}>
+      <header style={S.hero}>
+        <p style={S.heroSub}>Estate Sale · Atlanta, Georgia</p>
+        <h1 style={S.heroTitle}>Everything <em style={S.heroItalic}>Must Go</em></h1>
+        <div style={S.pills}>
+          <span style={S.pill}>Open House: {OPEN_HOUSE}</span>
+          <span style={S.pill}>The Indie, Unit 1107</span>
+        </div>
+        <div style={S.notice}>
+          <strong style={S.noticeStrong}>How it works:</strong> Small items leave same day with payment. Large furniture requires a <strong style={S.noticeStrong}>non-refundable 40% deposit</strong> to hold — pickup by <strong style={S.noticeStrong}>{PICKUP_DEADLINE}</strong> or deposit is forfeited.
+        </div>
+      </header>
+
+      {photos.length > 0 && <HeroGallery photos={photos} />}
+
+      <div style={S.searchWrap}>
+        <input style={S.searchInput} placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <div style={S.filterBar}>
+        <div style={S.filterRow}>
+          <span style={S.filterLabel}>Room:</span>
+          <button style={S.filterBtn(roomFilter === "all")} onClick={() => setRoomFilter("all")}>All</button>
+          {ROOMS.map(r => <button key={r} style={S.filterBtn(roomFilter === r)} onClick={() => setRoomFilter(r)}>{r}</button>)}
+        </div>
+      </div>
+
+      <div style={S.statsBar}>
+        <span style={{ fontWeight: 600 }}>{available}</span> available · <span style={{ color: "#FFD4C0" }}>{sold}</span> sold · {items.length} total items
+      </div>
+
+      <div>
+        {rooms.map(room => {
+          const roomItems = filtered.filter(i => i.room === room);
+          if (!roomItems.length) return null;
+          return (
+            <div key={room}>
+              <div style={S.roomHeader}>
+                <h2 style={S.roomTitle}>{room}</h2>
+                <span style={S.roomCount}>{roomItems.length} item{roomItems.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div style={S.grid}>{roomItems.map(item => <ItemCard key={item.id} item={item} />)}</div>
+            </div>
+          );
+        })}
+        {rooms.length === 0 && <p style={{ padding: "40px", textAlign: "center", color: "#9A9A90" }}>No items found.</p>}
+      </div>
+
+      <footer style={S.footer}>
+        <h3 style={S.footerTitle}>Questions & Payment</h3>
+        <p style={S.footerText}>Deposits are non-refundable and secure your item until {PICKUP_DEADLINE}. All items sold as-is. Digital payment only — no cash.</p>
+        <div style={S.payRow}>
+          <a href="https://venmo.com/u/Sarah-Sadd" target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Venmo @Sarah-Sadd</a>
+          <a href="https://www.paypal.me/sarahsadd" target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>PayPal @sarahsadd</a>
+          <a href="https://cash.app/$supersadd" target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Cash App $supersadd</a>
+          <span style={S.payPill}>Zelle — scan QR at door</span>
+        </div>
+      </footer>
+
+      <div style={{ textAlign: "center", padding: "12px", background: "#F2EFE9", borderTop: "1px solid #E0DBD3" }}>
+        <button onClick={onAdminClick} style={{ background: "transparent", border: "none", color: "#C8C4BC", fontSize: "0.67rem", letterSpacing: "0.1em", cursor: "pointer", textTransform: "uppercase" }}>Admin</button>
+      </div>
+    </div>
+  );
+}
+
+function ItemCard({ item }) {
+  return (
+    <div style={S.card(item.status)}>
+      {item.status === "sold" && <div style={S.soldStamp}>Sold</div>}
+      <div style={S.photoBox}>
+        {item.photo
+          ? <img src={item.photo} alt={item.name} style={S.photoImg} onError={e => { e.target.style.display = "none"; }} />
+          : <span style={S.photoPlaceholder}>No photo yet</span>}
+      </div>
+      <div style={S.itemName}>
+        {item.name}
+        {item.link && <a href={item.link} target="_blank" rel="noopener" style={S.itemLink}>↗ view</a>}
+      </div>
+      <div style={S.metaRow}>
+        <span style={S.badge(STATUS_CONFIG[item.status])}>{STATUS_CONFIG[item.status].label}</span>
+        {item.large && item.status === "available" && <span style={S.depositBadge}>Deposit: {fmt(item.deposit)}</span>}
+        {item.large && <span style={S.pickupNote}>Pickup by {PICKUP_DEADLINE}</span>}
+      </div>
+      <div style={S.priceBlock}>
+        <span style={S.salePrice}>{fmt(item.sale)}</span>
+        <span style={S.origPrice}>{fmt(item.retail)}</span>
+        <span style={S.savingsPct}>save {pct(item.sale, item.retail)}%</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function AdminLogin({ onSuccess, onBack }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  function submit() { pw === ADMIN_PASSWORD ? onSuccess() : setErr("Incorrect password."); }
+  return (
+    <div style={S.loginWrap}>
+      <div style={S.loginBox}>
+        <div style={S.loginTitle}>Admin</div>
+        <div style={S.loginSub}>Sale Management</div>
+        <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} style={S.loginInput} />
+        <button onClick={submit} style={S.loginBtn}>Enter</button>
+        {err && <div style={S.loginErr}>{err}</div>}
+        <div style={{ marginTop: "16px" }}>
+          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8A8A82", fontSize: "0.72rem", cursor: "pointer", textDecoration: "underline" }}>← Back to sale</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
+function AdminPanel({ items, saveItems, photos, savePhotos, onBack }) {
+  const [localItems, setLocalItems] = useState(items.map(i => ({ ...i })));
+  const [localPhotos, setLocalPhotos] = useState(photos.map(p => ({ ...p })));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [roomFilter, setRoomFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [activeTab, setActiveTab] = useState("items");
+  const [newItem, setNewItem] = useState({ room: ROOMS[0], name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
+  const [newPhotoUrl, setNewPhotoUrl] = useState("");
+  const [newPhotoCaption, setNewPhotoCaption] = useState("");
+
+  const visibleItems = useMemo(() => localItems.filter(item => {
+    const matchRoom = roomFilter === "all" || item.room === roomFilter;
+    const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
+    return matchRoom && matchSearch;
+  }), [localItems, roomFilter, search]);
+
+  function updateItem(id, field, value) { setLocalItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i)); setSaved(false); }
+  function deleteItem(id) { if (!confirm("Delete this item?")) return; setLocalItems(prev => prev.filter(i => i.id !== id)); setSaved(false); }
+
+  function normalizePhotoUrl(url) {
+    if (url.includes("dropbox.com")) {
+      return url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace(/[?&]dl=\d/, "").replace(/[?&]raw=\d/, "");
+    }
+    return url;
+  }
+
+  function addPhoto() {
+    if (!newPhotoUrl.trim()) return;
+    setLocalPhotos(prev => [...prev, { id: Date.now(), url: normalizePhotoUrl(newPhotoUrl.trim()), caption: newPhotoCaption.trim() }]);
+    setNewPhotoUrl(""); setNewPhotoCaption(""); setSaved(false);
+  }
+  function deletePhoto(id) { setLocalPhotos(prev => prev.filter(p => p.id !== id)); setSaved(false); }
+  function movePhoto(id, dir) {
+    setLocalPhotos(prev => {
+      const idx = prev.findIndex(p => p.id === id);
+      const next = idx + dir;
+      if (next < 0 || next >= prev.length) return prev;
+      const arr = [...prev]; [arr[idx], arr[next]] = [arr[next], arr[idx]]; return arr;
+    });
+    setSaved(false);
+  }
+  function updatePhotoCaption(id, caption) { setLocalPhotos(prev => prev.map(p => p.id === id ? { ...p, caption } : p)); setSaved(false); }
+
+  function handleSave() {
+    setSaving(true);
+    saveItems(localItems);
+    savePhotos(localPhotos);
+    setSaving(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  function addItem() {
+    if (!newItem.name.trim()) return;
+    const item = { ...newItem, id: Date.now(), retail: Number(newItem.retail) || 0, sale: Number(newItem.sale) || 0, deposit: Number(newItem.deposit) || 0 };
+    setLocalItems(prev => [...prev, item]);
+    setNewItem({ room: ROOMS[0], name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
+    setShowAddForm(false); setSaved(false);
+  }
+
+  const stats = {
+    available: localItems.filter(i => i.status === "available").length,
+    deposit: localItems.filter(i => i.status === "deposit").length,
+    sold: localItems.filter(i => i.status === "sold").length,
+    revenue: localItems.filter(i => i.status !== "available").reduce((s, i) => s + i.sale, 0),
+  };
+
+  return (
+    <div style={S.adminWrap}>
+      <div style={S.adminHeader}>
+        <h1 style={S.adminTitle}>Sale Admin</h1>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={handleSave} style={{ ...S.adminSaveBtn, background: saved ? "#1A5C2A" : "#1C1C1A" }}>{saving ? "Saving…" : saved ? "Saved ✓" : "Save All"}</button>
+          <button onClick={onBack} style={{ ...S.adminSaveBtn, background: "#4A4A44" }}>← Public View</button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1px", background: "#E0DBD3", borderBottom: "1px solid #E0DBD3" }}>
+        {[{ label: "Available", val: stats.available, color: "#1A5C2A" }, { label: "Deposit Taken", val: stats.deposit, color: "#C4522A" }, { label: "Sold", val: stats.sold, color: "#4A4A44" }, { label: "Revenue", val: fmt(stats.revenue), color: "#C4522A" }].map(s => (
+          <div key={s.label} style={{ background: "#FAFAF8", padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82", marginBottom: "4px" }}>{s.label}</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 500, color: s.color }}>{s.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", display: "flex" }}>
+        {["items", "photos"].map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${activeTab === tab ? "#C4522A" : "transparent"}`, padding: "12px 20px", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.1em", textTransform: "uppercase", color: activeTab === tab ? "#C4522A" : "#6B6B65", cursor: "pointer", fontWeight: activeTab === tab ? 500 : 400 }}>
+            {tab === "items" ? `Items (${localItems.length})` : `Apartment Photos (${localPhotos.length})`}
+          </button>
+        ))}
+      </div>
+
+      {/* Photos Tab */}
+      {activeTab === "photos" && (
+        <div>
+          <div style={{ background: "#FEF3EE", borderBottom: "1px solid #E0DBD3", padding: "16px 20px" }}>
+            <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>Add Apartment Photo</div>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: "10px", alignItems: "end" }}>
+              <div>
+                <div style={S.adminLabel}>Image URL (Dropbox, Imgur, Google Photos…)</div>
+                <input style={S.adminInput} value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)} placeholder="Paste any image link — Dropbox links auto-converted" onKeyDown={e => e.key === "Enter" && addPhoto()} />
+              </div>
+              <div>
+                <div style={S.adminLabel}>Caption (optional)</div>
+                <input style={S.adminInput} value={newPhotoCaption} onChange={e => setNewPhotoCaption(e.target.value)} placeholder="e.g. Living room" onKeyDown={e => e.key === "Enter" && addPhoto()} />
+              </div>
+              <button onClick={addPhoto} style={S.adminAddBtn}>Add</button>
+            </div>
+          </div>
+          {localPhotos.length === 0
+            ? <div style={{ padding: "48px", textAlign: "center", color: "#8A8A82", fontSize: "0.85rem" }}>No photos yet. Add your first apartment photo above.</div>
+            : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: "1px", background: "#E0DBD3" }}>
+                {localPhotos.map((photo, idx) => (
+                  <div key={photo.id} style={S.adminCard}>
+                    <div style={{ width: "100%", height: "140px", background: "#F2EFE9", borderRadius: "3px", overflow: "hidden" }}>
+                      <img src={photo.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.opacity = 0.15; }} />
+                    </div>
+                    <div><div style={S.adminLabel}>Caption</div><input style={S.adminInput} value={photo.caption} onChange={e => updatePhotoCaption(photo.id, e.target.value)} placeholder="e.g. Living room" /></div>
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <span style={{ fontSize: "0.67rem", color: "#8A8A82", flex: 1 }}>Photo {idx + 1} of {localPhotos.length}</span>
+                      <button onClick={() => movePhoto(photo.id, -1)} disabled={idx === 0} style={{ ...S.adminDeleteBtn, opacity: idx === 0 ? 0.3 : 1 }}>↑</button>
+                      <button onClick={() => movePhoto(photo.id, 1)} disabled={idx === localPhotos.length - 1} style={{ ...S.adminDeleteBtn, opacity: idx === localPhotos.length - 1 ? 0.3 : 1 }}>↓</button>
+                      <button onClick={() => deletePhoto(photo.id)} style={{ ...S.adminDeleteBtn, color: "#C4522A", borderColor: "#F0C4A8" }}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+          }
+        </div>
+      )}
+
+      {/* Items Tab */}
+      {activeTab === "items" && <div>
+        <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "10px 16px", display: "flex", gap: "8px", overflowX: "auto" }}>
+          <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.adminInput, width: "180px", flexShrink: 0 }} />
+          <select value={roomFilter} onChange={e => setRoomFilter(e.target.value)} style={{ ...S.adminSelect, width: "auto" }}>
+            <option value="all">All Rooms</option>
+            {ROOMS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <button onClick={() => setShowAddForm(v => !v)} style={S.adminAddBtn}>+ Add Item</button>
+        </div>
+
+        {showAddForm && (
+          <div style={{ background: "#FEF3EE", borderBottom: "1px solid #E0DBD3", padding: "16px 20px" }}>
+            <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>New Item</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" }}>
+              <div><div style={S.adminLabel}>Name</div><input style={S.adminInput} value={newItem.name} onChange={e => setNewItem(p => ({ ...p, name: e.target.value }))} placeholder="Item name" /></div>
+              <div><div style={S.adminLabel}>Room</div><select style={S.adminSelect} value={newItem.room} onChange={e => setNewItem(p => ({ ...p, room: e.target.value }))}>{ROOMS.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+              <div><div style={S.adminLabel}>Retail $</div><input style={S.adminInput} type="number" value={newItem.retail} onChange={e => setNewItem(p => ({ ...p, retail: e.target.value }))} /></div>
+              <div><div style={S.adminLabel}>Sale $</div><input style={S.adminInput} type="number" value={newItem.sale} onChange={e => setNewItem(p => ({ ...p, sale: e.target.value }))} /></div>
+              <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={newItem.photo} onChange={e => setNewItem(p => ({ ...p, photo: normalizePhotoUrl(e.target.value) }))} placeholder="https://…" /></div>
+              <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={newItem.link} onChange={e => setNewItem(p => ({ ...p, link: e.target.value }))} placeholder="https://…" /></div>
+            </div>
+            <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
+              <label style={{ fontSize: "0.78rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}><input type="checkbox" checked={newItem.large} onChange={e => setNewItem(p => ({ ...p, large: e.target.checked }))} /> Large item (requires pickup)</label>
+              <button onClick={addItem} style={S.adminAddBtn}>Add Item</button>
+              <button onClick={() => setShowAddForm(false)} style={S.adminDeleteBtn}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        <div style={S.adminGrid}>
+          {visibleItems.map(item => (
+            <div key={item.id} style={S.adminCard}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                <div><div style={S.adminCardName}>{item.name}</div><div style={S.adminCardRoom}>{item.room}</div></div>
+                <button onClick={() => deleteItem(item.id)} style={S.adminDeleteBtn}>✕</button>
+              </div>
+              <div><div style={S.adminLabel}>Status</div>
+                <select style={S.adminSelect} value={item.status} onChange={e => updateItem(item.id, "status", e.target.value)}>
+                  <option value="available">Available</option>
+                  <option value="deposit">Deposit Taken</option>
+                  <option value="sold">Sold</option>
+                </select>
+              </div>
+              <div style={S.adminRow}>
+                <div><div style={S.adminLabel}>Sale Price $</div><input style={S.adminInput} type="number" value={item.sale} onChange={e => updateItem(item.id, "sale", Number(e.target.value))} /></div>
+                <div><div style={S.adminLabel}>Deposit $</div><input style={S.adminInput} type="number" value={item.deposit} onChange={e => updateItem(item.id, "deposit", Number(e.target.value))} /></div>
+              </div>
+              <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={item.photo} onChange={e => updateItem(item.id, "photo", normalizePhotoUrl(e.target.value))} placeholder="https://…" /></div>
+              <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={item.link} onChange={e => updateItem(item.id, "link", e.target.value)} placeholder="https://…" /></div>
+              <label style={{ fontSize: "0.75rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}><input type="checkbox" checked={item.large} onChange={e => updateItem(item.id, "large", e.target.checked)} /> Large item (requires deposit + pickup)</label>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: "20px", textAlign: "center" }}>
+          <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem" }}>
+            {saving ? "Saving…" : saved ? "All Changes Saved ✓" : "Save All Changes"}
+          </button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
