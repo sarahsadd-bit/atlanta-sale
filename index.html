@@ -13,15 +13,19 @@ body { background: #FAFAF8; }
 </head>
 <body>
 <div id="root"></div>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script type="text/babel">
-const { useState, useEffect, useMemo } = React;
 
+<!-- CDN with crossorigin for error detection -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"
+  onerror="document.getElementById('root').innerHTML='<div style=\'font-family:sans-serif;padding:40px;text-align:center\'><p>Failed to load app. Please refresh.</p></div>'">
+</script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = "rth2025";
-const PICKUP_DEADLINE = "May 28, 2025";
-const OPEN_HOUSE = "May 16–17, 10am–4pm";
 
 const INITIAL_ITEMS = [
   { id:1,  room:"Entry & Kitchen", name:"Wall Treatment", retail:1500, sale:750, deposit:300, large:true, status:"available", photo:"", link:"" },
@@ -99,16 +103,242 @@ const INITIAL_ITEMS = [
   { id:73, room:"Miscellaneous", name:"Mac Sports XL Folding Wagon", retail:99, sale:50, deposit:0, large:false, status:"available", photo:"", link:"https://www.costco.com/p/-/mac-sports-xl-folding-wagon-with-brakes/4000424138" },
 ];
 
-const ROOMS = [...new Set(INITIAL_ITEMS.map(i => i.room))];
-const fmt = n => "$" + Number(n).toLocaleString();
-const pct = (sale, retail) => Math.round(((retail - sale) / retail) * 100);
+const DEFAULT_SETTINGS = {
+  openHouse: "May 16–17, 10am–4pm",
+  pickupDeadline: "May 28, 2025",
+  address: "The Indie, Unit 1107",
+  heroImage: "",
+  venmo: "https://venmo.com/u/Sarah-Sadd",
+  paypal: "https://www.paypal.me/sarahsadd",
+  cashapp: "https://cash.app/$supersadd",
+  venmoHandle: "@Sarah-Sadd",
+  paypalHandle: "@sarahsadd",
+  cashappHandle: "$supersadd",
+  footerNote: "Deposits are non-refundable and secure your item until the pickup deadline. All items sold as-is. Digital payment only — no cash.",
+};
 
+const VALID_STATUSES = ["available", "deposit", "sold"];
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+const fmt = n => {
+  const num = Number(n);
+  return isNaN(num) ? "$0" : "$" + num.toLocaleString();
+};
+
+const pct = (sale, retail) => {
+  const s = Number(sale), r = Number(retail);
+  if (!r || r <= 0) return 0;
+  return Math.max(0, Math.round(((r - s) / r) * 100));
+};
+
+// Single canonical Dropbox normalizer — handles both www and non-www
+function normalizeUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  url = url.trim();
+  if (url.includes("dropbox.com")) {
+    return url
+      .replace(/^https?:\/\/(www\.)?dropbox\.com/, "https://dl.dropboxusercontent.com")
+      .replace(/[?&]dl=\d/g, "")
+      .replace(/[?&]raw=\d/g, "");
+  }
+  return url;
+}
+
+// Safe unique ID — stays within JS safe integer range and Supabase bigint
+function newId() {
+  // Use last 10 digits of timestamp + 4 random digits = 14 digit number
+  // Max: 9,999,999,9999 * 9999 ~ safe, well within bigint range
+  const ts = Date.now() % 10000000000; // last 10 digits
+  const rand = typeof crypto !== "undefined" && crypto.getRandomValues
+    ? crypto.getRandomValues(new Uint16Array(1))[0] // 0-65535
+    : Math.floor(Math.random() * 65535);
+  return ts * 100000 + (rand % 100000);
+}
+
+// Fetch with timeout
+async function fetchWithTimeout(url, options = {}, ms = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://rtrvurfpmsvyjophajdl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_cLaNvP11cxHSytB6W61jmA_Zswi44Dw";
+const sbH = {
+  "Content-Type": "application/json",
+  "apikey": SUPABASE_KEY,
+  "Authorization": `Bearer ${SUPABASE_KEY}`,
+};
+
+const db = {
+  // Ping all three tables to confirm Supabase is alive and accessible
+  async ping() {
+    try {
+      const r = await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/sale_items?select=id&limit=1`,
+        { headers: sbH }, 8000
+      );
+      return r.ok;
+    } catch { return false; }
+  },
+
+  async getItems() {
+    const r = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/sale_items?select=*&order=id.asc&limit=500`,
+      { headers: { ...sbH, "Range-Unit": "items", "Range": "0-499" } }
+    );
+    if (!r.ok) throw new Error(`getItems failed: ${r.status}`);
+    const data = await r.json();
+    if (!Array.isArray(data)) throw new Error("getItems: unexpected response shape");
+    // Sanitize every item — defend against bad DB data crashing ItemCard
+    return data.map(item => ({
+      id: item.id || newId(),
+      room: item.room || "Miscellaneous",
+      name: item.name || "Unnamed Item",
+      retail: Number(item.retail) || 0,
+      sale: Number(item.sale) || 0,
+      deposit: Number(item.deposit) || 0,
+      large: Boolean(item.large),
+      status: VALID_STATUSES.includes(item.status) ? item.status : "available",
+      photo: normalizeUrl(item.photo || ""),
+      link: item.link || "",
+    }));
+  },
+
+  async saveItems(items) {
+    // Step 1: Delete all
+    const del = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/sale_items`,
+      { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
+    );
+    if (!del.ok) throw new Error(`saveItems delete failed: ${del.status} — ${await del.text()}`);
+    if (items.length === 0) return;
+    // Step 2: Insert in batches of 10
+    for (let i = 0; i < items.length; i += 10) {
+      const batch = items.slice(i, i + 10);
+      const r = await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/sale_items`,
+        { method: "POST", headers: { ...sbH, "Prefer": "return=minimal" }, body: JSON.stringify(batch) }
+      );
+      if (!r.ok) throw new Error(`saveItems batch ${i} failed: ${r.status} — ${await r.text()}`);
+    }
+    // Step 3: Verify count — non-fatal if header missing
+    try {
+      const v = await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/sale_items?select=id`,
+        { headers: { ...sbH, "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-999" } }
+      );
+      const cr = v.headers.get("content-range");
+      if (cr) {
+        const count = parseInt(cr.split("/")[1]);
+        if (!isNaN(count) && count !== items.length) {
+          throw new Error(`saveItems verify failed: expected ${items.length}, got ${count}`);
+        }
+      }
+    } catch(e) {
+      if (e.message.includes("verify failed")) throw e;
+      // Ignore verify errors that aren't count mismatches (e.g. rate limit on count header)
+    }
+  },
+
+  async getPhotos() {
+    const r = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/apt_photos?select=*&order=sort_order.asc&limit=500`,
+      { headers: { ...sbH, "Range-Unit": "items", "Range": "0-499" } }
+    );
+    if (!r.ok) throw new Error(`getPhotos failed: ${r.status}`);
+    const data = await r.json();
+    if (!Array.isArray(data)) return [];
+    return data.map(p => ({
+      id: p.id || newId(),
+      url: normalizeUrl(p.url || ""),
+      caption: p.caption || "",
+      sort_order: p.sort_order || 0,
+    }));
+  },
+
+  async savePhotos(photos) {
+    const del = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/apt_photos`,
+      { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
+    );
+    if (!del.ok) throw new Error(`savePhotos delete failed: ${del.status} — ${await del.text()}`);
+    if (photos.length === 0) return;
+    const withOrder = photos.map((p, i) => ({ ...p, sort_order: i }));
+    for (let i = 0; i < withOrder.length; i += 10) {
+      const batch = withOrder.slice(i, i + 10);
+      const r = await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/apt_photos`,
+        { method: "POST", headers: { ...sbH, "Prefer": "return=minimal" }, body: JSON.stringify(batch) }
+      );
+      if (!r.ok) throw new Error(`savePhotos batch ${i} failed: ${r.status} — ${await r.text()}`);
+    }
+    // Verify — non-fatal on header issues
+    try {
+      const v = await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/apt_photos?select=id`,
+        { headers: { ...sbH, "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-999" } }
+      );
+      const cr = v.headers.get("content-range");
+      if (cr) {
+        const count = parseInt(cr.split("/")[1]);
+        if (!isNaN(count) && count !== photos.length) {
+          throw new Error(`savePhotos verify failed: expected ${photos.length}, got ${count}`);
+        }
+      }
+    } catch(e) {
+      if (e.message.includes("verify failed")) throw e;
+    }
+  },
+
+  async getSettings() {
+    const r = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/site_settings?select=*&limit=1`,
+      { headers: sbH }
+    );
+    if (!r.ok) throw new Error(`getSettings failed: ${r.status}`);
+    const data = await r.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    // Safely merge — defend against malformed JSON in DB
+    try {
+      const val = typeof data[0].value === "object" ? data[0].value : JSON.parse(data[0].value);
+      return { ...DEFAULT_SETTINGS, ...val };
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  },
+
+  async saveSettings(settings) {
+    const del = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/site_settings`,
+      { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
+    );
+    if (!del.ok) throw new Error(`saveSettings delete failed: ${del.status}`);
+    const r = await fetchWithTimeout(
+      `${SUPABASE_URL}/rest/v1/site_settings`,
+      { method: "POST", headers: { ...sbH, "Prefer": "return=minimal" }, body: JSON.stringify([{ id: 1, value: settings }]) }
+    );
+    if (!r.ok) throw new Error(`saveSettings insert failed: ${r.status} — ${await r.text()}`);
+  },
+};
+
+// ─── STATUS CONFIG ────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
   available: { label: "Available", bg: "#EAF2EC", color: "#1A5C2A", border: "#B0D4BA" },
   deposit:   { label: "Deposit Taken", bg: "#FEF3EE", color: "#8A3318", border: "#F0C4A8" },
   sold:      { label: "Sold", bg: "#F2F2F0", color: "#4A4A44", border: "#C8C4BC" },
+  // Fallback for any unknown status
+  unknown:   { label: "Unknown", bg: "#F2F2F0", color: "#4A4A44", border: "#C8C4BC" },
 };
+const getStatus = s => STATUS_CONFIG[s] || STATUS_CONFIG.unknown;
 
+// ─── STYLES ───────────────────────────────────────────────────────────────────
 const S = {
   page: { fontFamily: "'DM Sans','Helvetica Neue',sans-serif", background: "#FAFAF8", minHeight: "100vh", color: "#1C1C1A" },
   hero: { background: "#2A2A26", color: "#FAFAF8", padding: "56px 24px 44px", textAlign: "center" },
@@ -155,13 +385,11 @@ const S = {
   adminTitle: { fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.4rem", fontWeight: 400, flex: 1, margin: 0, color: "#FAFAF8" },
   adminGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: "1px", background: "#E0DBD3" },
   adminCard: { background: "#FAFAF8", padding: "16px 18px", display: "flex", flexDirection: "column", gap: "10px" },
-  adminCardName: { fontSize: "0.88rem", fontWeight: 500, color: "#1C1C1A" },
-  adminCardRoom: { fontSize: "0.67rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82" },
   adminInput: { background: "#FFFFFF", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "7px 10px", color: "#1C1C1A", fontFamily: "inherit", fontSize: "0.82rem", width: "100%", boxSizing: "border-box" },
   adminSelect: { background: "#FFFFFF", border: "1px solid #D0CBC3", borderRadius: "4px", padding: "7px 10px", color: "#1C1C1A", fontFamily: "inherit", fontSize: "0.82rem", width: "100%", boxSizing: "border-box" },
   adminLabel: { fontSize: "0.64rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82", marginBottom: "4px" },
   adminRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" },
-  adminSaveBtn: { background: "#1C1C1A", border: "none", borderRadius: "4px", padding: "8px 18px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.08em", cursor: "pointer", textTransform: "uppercase" },
+  adminSaveBtn: (state) => ({ background: state === "error" ? "#8B2020" : state === "saved" ? "#1A5C2A" : "#1C1C1A", border: "none", borderRadius: "4px", padding: "8px 18px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.08em", cursor: "pointer", textTransform: "uppercase", transition: "background 0.2s" }),
   adminAddBtn: { background: "#C4522A", border: "none", borderRadius: "4px", padding: "8px 18px", color: "#FAFAF8", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.08em", cursor: "pointer", textTransform: "uppercase" },
   adminDeleteBtn: { background: "transparent", border: "1px solid #E0DBD3", borderRadius: "4px", padding: "5px 10px", color: "#8A8A82", fontFamily: "inherit", fontSize: "0.7rem", cursor: "pointer" },
   loginWrap: { background: "#F2EFE9", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" },
@@ -173,122 +401,100 @@ const S = {
   loginErr: { color: "#C4522A", fontSize: "0.76rem", marginTop: "10px", fontWeight: 500 },
 };
 
-// ─── SUPABASE ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL = "https://rtrvurfpmsvyjophajdl.supabase.co";
-const SUPABASE_KEY = "sb_publishable_cLaNvP11cxHSytB6W61jmA_Zswi44Dw";
-const sbHeaders = { "Content-Type": "application/json", "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` };
-
-const db = {
-  async getItems() {
-    try {
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/sale_items?select=*&order=id.asc`, { headers: sbHeaders });
-      const data = await r.json();
-      return Array.isArray(data) && data.length > 0 ? data : null;
-    } catch { return null; }
-  },
-  async saveItems(items) {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/sale_items`, {
-      method: "POST",
-      headers: { ...sbHeaders, "Prefer": "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify(items)
-    });
-    if (!r.ok) throw new Error(`saveItems failed: ${r.status}`);
-    const ids = items.map(i => i.id).join(",");
-    if (ids) await fetch(`${SUPABASE_URL}/rest/v1/sale_items?id=not.in.(${ids})`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-  },
-  async getPhotos() {
-    try {
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/apt_photos?select=*&order=sort_order.asc`, { headers: sbHeaders });
-      const data = await r.json();
-      return Array.isArray(data) ? data : [];
-    } catch { return []; }
-  },
-  async savePhotos(photos) {
-    if (photos.length === 0) {
-      await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-      return;
+// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error("ErrorBoundary caught:", e, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ fontFamily: "'DM Sans',sans-serif", padding: "48px 24px", textAlign: "center", background: "#FAFAF8", minHeight: "100vh" }}>
+          <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.5rem", color: "#1C1C1A", marginBottom: "12px" }}>Something went wrong</div>
+          <div style={{ fontSize: "0.82rem", color: "#8A8A82", marginBottom: "24px", maxWidth: "360px", margin: "0 auto 24px" }}>
+            An error occurred loading the page. Please refresh and try again.
+          </div>
+          <div style={{ fontSize: "0.72rem", color: "#C4522A", fontFamily: "monospace", marginBottom: "24px" }}>
+            {this.state.error.message}
+          </div>
+          <button onClick={() => window.location.reload()} style={{ background: "#1C1C1A", color: "#FAFAF8", border: "none", borderRadius: "4px", padding: "10px 28px", fontFamily: "inherit", cursor: "pointer", fontSize: "0.85rem" }}>
+            Refresh Page
+          </button>
+        </div>
+      );
     }
-    const withOrder = photos.map((p, i) => ({ ...p, sort_order: i }));
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/apt_photos`, {
-      method: "POST",
-      headers: { ...sbHeaders, "Prefer": "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify(withOrder)
-    });
-    if (!r.ok) throw new Error(`savePhotos failed: ${r.status}`);
-    const ids = photos.map(p => p.id).join(",");
-    if (ids) await fetch(`${SUPABASE_URL}/rest/v1/apt_photos?id=not.in.(${ids})`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-  },
-};
-
-function normalizeDropbox(url) {
-  if (!url) return url;
-  if (url.includes("dropbox.com")) {
-    return url
-      .replace("www.dropbox.com", "dl.dropboxusercontent.com")
-      .replace(/[?&]dl=\d/, "")
-      .replace(/[?&]raw=\d/, "");
+    return this.props.children;
   }
-  return url;
 }
-
-const DEFAULT_SETTINGS = {
-  openHouse: "May 16–17, 10am–4pm",
-  pickupDeadline: "May 28, 2025",
-  address: "The Indie, Unit 1107",
-  heroImage: "",
-  venmo: "https://venmo.com/u/Sarah-Sadd",
-  paypal: "https://www.paypal.me/sarahsadd",
-  cashapp: "https://cash.app/$supersadd",
-  venmoHandle: "@Sarah-Sadd",
-  paypalHandle: "@sarahsadd",
-  cashappHandle: "$supersadd",
-  footerNote: "Deposits are non-refundable and secure your item until the pickup deadline. All items sold as-is. Digital payment only — no cash.",
-};
-
-// Add settings to db object
-Object.assign(db, {
-  async getSettings() {
-    try {
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/site_settings?select=*&limit=1`, { headers: sbHeaders });
-      const data = await r.json();
-      return Array.isArray(data) && data.length > 0 ? { ...DEFAULT_SETTINGS, ...data[0].value } : null;
-    } catch { return null; }
-  },
-  async saveSettings(settings) {
-    try {
-      await fetch(`${SUPABASE_URL}/rest/v1/site_settings`, { method: "DELETE", headers: { ...sbHeaders, "Prefer": "return=minimal" } });
-      await fetch(`${SUPABASE_URL}/rest/v1/site_settings`, { method: "POST", headers: { ...sbHeaders, "Prefer": "return=minimal" }, body: JSON.stringify([{ id: 1, value: settings }]) });
-    } catch(e) { console.error(e); }
-  },
-});
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 function App() {
-  const [view, setView] = useState("public"); // public | gallery | login | admin
+  const [view, setView] = useState("public");
   const [items, setItems] = useState([]);
   const [photos, setPhotos] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [loaded, setLoaded] = useState(false);
+  const [loadState, setLoadState] = useState("loading"); // loading | ok | error | retrying
 
-  useEffect(() => {
-    async function load() {
-      const [dbItems, dbPhotos, dbSettings] = await Promise.all([db.getItems(), db.getPhotos(), db.getSettings()]);
-      setItems(dbItems || INITIAL_ITEMS);
+  async function load() {
+    setLoadState("loading");
+    const alive = await db.ping();
+    if (!alive) { setLoadState("error"); return; }
+    try {
+      const [dbItems, dbPhotos, dbSettings] = await Promise.all([
+        db.getItems().catch(() => null),
+        db.getPhotos().catch(() => []),
+        db.getSettings().catch(() => null),
+      ]);
+      // getItems returning null means DB is accessible but table is empty — use INITIAL_ITEMS
+      // getItems throwing means real error — already caught above
+      setItems(dbItems !== null ? dbItems : INITIAL_ITEMS);
       setPhotos(dbPhotos || []);
       setSettings(dbSettings || DEFAULT_SETTINGS);
-      setLoaded(true);
+      setLoadState("ok");
+    } catch(e) {
+      console.error("Load error:", e);
+      setLoadState("error");
     }
-    load();
-  }, []);
+  }
 
-  async function saveItems(v) { setItems(v); await db.saveItems(v); }
-  async function savePhotos(v) { setPhotos(v); await db.savePhotos(v); }
-  async function saveSettings(v) { setSettings(v); await db.saveSettings(v); }
+  useEffect(() => { load(); }, []);
 
-  if (!loaded) return <div style={{ background: "#FAFAF8", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#8A8A82", fontFamily: "'DM Sans',sans-serif", fontSize: "0.85rem", letterSpacing: "0.1em", textTransform: "uppercase" }}>Loading…</div>;
+  if (loadState === "loading" || loadState === "retrying") {
+    return (
+      <div style={{ background: "#FAFAF8", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ width: "32px", height: "32px", border: "2px solid #E0DBD3", borderTop: "2px solid #C4522A", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ fontSize: "0.8rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#8A8A82" }}>
+          {loadState === "retrying" ? "Reconnecting…" : "Loading…"}
+        </div>
+      </div>
+    );
+  }
+
+  if (loadState === "error") {
+    return (
+      <div style={{ background: "#FAFAF8", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", fontFamily: "'DM Sans',sans-serif", padding: "40px", textAlign: "center" }}>
+        <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.3rem", color: "#1C1C1A" }}>Database unavailable</div>
+        <div style={{ fontSize: "0.8rem", color: "#8A8A82", maxWidth: "320px", lineHeight: 1.7 }}>
+          Supabase may be waking up. This can take up to 30 seconds on first load. Wait a moment then try again.
+        </div>
+        <button onClick={() => { setLoadState("retrying"); setTimeout(load, 2000); }}
+          style={{ marginTop: "8px", background: "#1C1C1A", color: "#FAFAF8", border: "none", borderRadius: "4px", padding: "10px 28px", fontFamily: "inherit", cursor: "pointer", fontSize: "0.85rem" }}>
+          Try Again
+        </button>
+      </div>
+    );
+  }
 
   if (view === "login") return <AdminLogin onSuccess={() => setView("admin")} onBack={() => setView("public")} />;
-  if (view === "admin") return <AdminPanel items={items} saveItems={saveItems} photos={photos} savePhotos={savePhotos} settings={settings} saveSettings={saveSettings} onBack={() => setView("public")} />;
+  if (view === "admin") return (
+    <AdminPanel
+      items={items} setItems={setItems}
+      photos={photos} setPhotos={setPhotos}
+      settings={settings} setSettings={setSettings}
+      onBack={() => setView("public")}
+    />
+  );
   if (view === "gallery") return <GalleryPage photos={photos} onBack={() => setView("public")} />;
   return <PublicSite items={items} photos={photos} settings={settings} onAdminClick={() => setView("login")} onGalleryClick={() => setView("gallery")} />;
 }
@@ -297,8 +503,9 @@ function App() {
 function HeroImage({ src }) {
   if (!src) return null;
   return (
-    <div style={{ width: "100%", height: "clamp(260px,55vw,520px)", overflow: "hidden", position: "relative", background: "#1C1C1A" }}>
-      <img src={src} alt="The Space" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => e.target.style.display = "none"} />
+    <div style={{ width: "100%", height: "clamp(260px,55vw,520px)", overflow: "hidden", background: "#1C1C1A" }}>
+      <img src={src} alt="The Space" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        onError={e => { e.target.parentNode.style.display = "none"; }} />
     </div>
   );
 }
@@ -306,59 +513,79 @@ function HeroImage({ src }) {
 // ─── GALLERY PAGE ──────────────────────────────────────────────────────────────
 function GalleryPage({ photos, onBack }) {
   const [lightbox, setLightbox] = useState(null);
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
 
   useEffect(() => {
     function onKey(e) {
-      if (lightbox === null) return;
+      const n = photosRef.current.length;
+      if (!n) return;
       if (e.key === "Escape") setLightbox(null);
-      if (e.key === "ArrowRight") setLightbox(i => (i + 1) % photos.length);
-      if (e.key === "ArrowLeft") setLightbox(i => (i - 1 + photos.length) % photos.length);
+      if (e.key === "ArrowRight") setLightbox(i => i === null ? null : (i + 1) % n);
+      if (e.key === "ArrowLeft") setLightbox(i => i === null ? null : (i - 1 + n) % n);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [lightbox, photos.length]);
+  }, []);
 
   return (
-    <div style={{ ...S.page, minHeight: "100vh" }}>
-      <div style={{ background: "#2A2A26", padding: "20px 24px", display: "flex", alignItems: "center", gap: "16px" }}>
-        <button onClick={onBack} style={{ background: "transparent", border: "none", color: "#9A9A90", fontFamily: "inherit", fontSize: "0.72rem", letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer" }}>← Back</button>
-        <h1 style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.4rem", fontWeight: 400, color: "#FAFAF8", margin: 0, flex: 1 }}>The Space</h1>
-        <span style={{ fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#6B6B65" }}>{photos.length} photos</span>
-      </div>
-
-      {photos.length === 0
-        ? <div style={{ padding: "80px 24px", textAlign: "center", color: "#8A8A82" }}>No photos added yet.</div>
-        : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "2px", background: "#E0DBD3" }}>
-            {photos.map((photo, i) => (
-              <div key={photo.id} onClick={() => setLightbox(i)} style={{ position: "relative", paddingBottom: "75%", background: "#F2EFE9", cursor: "pointer", overflow: "hidden" }}>
-                <img src={photo.url} alt={photo.caption || ""} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.3s ease" }}
-                  onMouseEnter={e => e.target.style.transform = "scale(1.03)"}
-                  onMouseLeave={e => e.target.style.transform = "scale(1)"}
-                  onError={e => e.target.style.display = "none"} />
-                {photo.caption && (
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(28,28,26,0.7))", padding: "24px 14px 10px" }}>
-                    <p style={{ margin: 0, color: "#F2EFE9", fontSize: "0.75rem", letterSpacing: "0.04em" }}>{photo.caption}</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-      }
-
-      {/* Lightbox */}
-      {lightbox !== null && (
-        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(10,10,10,0.95)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <img src={photos[lightbox].url} alt="" onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: "3px" }} />
-          {photos[lightbox].caption && <p style={{ position: "absolute", bottom: "20px", left: 0, right: 0, textAlign: "center", color: "#C8C8C0", fontSize: "0.82rem", letterSpacing: "0.06em" }}>{photos[lightbox].caption}</p>}
-          <button onClick={e => { e.stopPropagation(); setLightbox(i => (i - 1 + photos.length) % photos.length); }} style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "44px", height: "44px", cursor: "pointer", fontSize: "1.4rem" }}>‹</button>
-          <button onClick={e => { e.stopPropagation(); setLightbox(i => (i + 1) % photos.length); }} style={{ position: "absolute", right: "16px", top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "44px", height: "44px", cursor: "pointer", fontSize: "1.4rem" }}>›</button>
-          <button onClick={() => setLightbox(null)} style={{ position: "absolute", top: "16px", right: "16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "36px", height: "36px", cursor: "pointer", fontSize: "1rem" }}>✕</button>
-          <div style={{ position: "absolute", bottom: "56px", left: 0, right: 0, display: "flex", justifyContent: "center", gap: "6px" }}>
-            {photos.map((_, i) => <button key={i} onClick={e => { e.stopPropagation(); setLightbox(i); }} style={{ width: i === lightbox ? "18px" : "7px", height: "7px", borderRadius: "4px", background: i === lightbox ? "#C4522A" : "rgba(255,255,255,0.25)", border: "none", cursor: "pointer", padding: 0, transition: "all 0.3s" }} />)}
-          </div>
+    <ErrorBoundary>
+      <div style={{ ...S.page, minHeight: "100vh" }}>
+        <div style={{ background: "#2A2A26", padding: "20px 24px", display: "flex", alignItems: "center", gap: "16px" }}>
+          <button onClick={onBack} style={{ background: "transparent", border: "none", color: "#9A9A90", fontFamily: "inherit", fontSize: "0.72rem", letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer" }}>← Back</button>
+          <h1 style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: "1.4rem", fontWeight: 400, color: "#FAFAF8", margin: 0, flex: 1 }}>The Space</h1>
+          <span style={{ fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "#6B6B65" }}>{photos.length} photos</span>
         </div>
-      )}
-    </div>
+
+        {photos.length === 0
+          ? <div style={{ padding: "80px 24px", textAlign: "center", color: "#8A8A82" }}>No photos added yet.</div>
+          : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "2px", background: "#E0DBD3" }}>
+              {photos.map((photo, i) => (
+                <div key={photo.id} onClick={() => setLightbox(i)}
+                  style={{ position: "relative", paddingBottom: "75%", background: "#F2EFE9", cursor: "pointer", overflow: "hidden" }}>
+                  <img src={photo.url} alt={photo.caption || ""}
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.3s ease" }}
+                    onMouseEnter={e => e.currentTarget.style.transform = "scale(1.03)"}
+                    onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
+                    onError={e => { e.currentTarget.style.display = "none"; }} />
+                  {photo.caption && (
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(28,28,26,0.7))", padding: "24px 14px 10px", pointerEvents: "none" }}>
+                      <p style={{ margin: 0, color: "#F2EFE9", fontSize: "0.75rem", letterSpacing: "0.04em" }}>{photo.caption}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+        }
+
+        {lightbox !== null && photos[lightbox] && (
+          <div onClick={() => setLightbox(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(10,10,10,0.96)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <img src={photos[lightbox].url} alt=""
+              onClick={e => e.stopPropagation()}
+              style={{ maxWidth: "90vw", maxHeight: "82vh", objectFit: "contain", borderRadius: "3px" }}
+              onError={e => { e.currentTarget.style.display = "none"; }} />
+            {photos[lightbox].caption && (
+              <p style={{ position: "absolute", bottom: "56px", left: 0, right: 0, textAlign: "center", color: "#C8C8C0", fontSize: "0.82rem", letterSpacing: "0.06em", padding: "0 20px" }}>
+                {photos[lightbox].caption}
+              </p>
+            )}
+            <button onClick={e => { e.stopPropagation(); setLightbox(i => (i - 1 + photos.length) % photos.length); }}
+              style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "44px", height: "44px", cursor: "pointer", fontSize: "1.4rem" }}>‹</button>
+            <button onClick={e => { e.stopPropagation(); setLightbox(i => (i + 1) % photos.length); }}
+              style={{ position: "absolute", right: "16px", top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "44px", height: "44px", cursor: "pointer", fontSize: "1.4rem" }}>›</button>
+            <button onClick={() => setLightbox(null)}
+              style={{ position: "absolute", top: "16px", right: "16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#FAFAF8", borderRadius: "3px", width: "36px", height: "36px", cursor: "pointer", fontSize: "1rem" }}>✕</button>
+            <div style={{ position: "absolute", bottom: "20px", left: 0, right: 0, display: "flex", justifyContent: "center", gap: "6px" }}>
+              {photos.map((_, i) => (
+                <button key={i} onClick={e => { e.stopPropagation(); setLightbox(i); }}
+                  style={{ width: i === lightbox ? "18px" : "7px", height: "7px", borderRadius: "4px", background: i === lightbox ? "#C4522A" : "rgba(255,255,255,0.25)", border: "none", cursor: "pointer", padding: 0, transition: "all 0.3s" }} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 
@@ -367,111 +594,132 @@ function PublicSite({ items, photos, settings, onAdminClick, onGalleryClick }) {
   const [roomFilter, setRoomFilter] = useState("all");
   const [search, setSearch] = useState("");
 
+  const allRooms = useMemo(() => [...new Set(items.map(i => i.room))], [items]);
+
   const filtered = useMemo(() => items.filter(item => {
     const matchRoom = roomFilter === "all" || item.room === roomFilter;
     const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase()) || item.room.toLowerCase().includes(search.toLowerCase());
     return matchRoom && matchSearch;
   }), [items, roomFilter, search]);
 
-  const allRooms = useMemo(() => [...new Set(items.map(i => i.room))], [items]);
-  const rooms = useMemo(() => [...new Set(filtered.map(i => i.room))], [filtered]);
-  const available = items.filter(i => i.status === "available").length;
-  const sold = items.filter(i => i.status === "sold").length;
+  const filteredRooms = useMemo(() => [...new Set(filtered.map(i => i.room))], [filtered]);
+  const available = useMemo(() => items.filter(i => i.status === "available").length, [items]);
+  const sold = useMemo(() => items.filter(i => i.status === "sold").length, [items]);
 
   return (
-    <div style={S.page}>
-      <header style={{ ...S.hero, paddingBottom: settings.heroImage ? "28px" : "44px" }}>
-        <p style={S.heroSub}>Estate Sale · Atlanta, Georgia</p>
-        <h1 style={S.heroTitle}>Everything <em style={S.heroItalic}>Must Go</em></h1>
-        <div style={S.pills}>
-          <span style={S.pill}>Open House: {settings.openHouse}</span>
-          <span style={S.pill}>{settings.address}</span>
-          {photos.length > 0 && (
-            <button onClick={onGalleryClick} style={{ ...S.pill, background: "rgba(196,82,42,0.25)", border: "1px solid rgba(196,82,42,0.5)", color: "#F0C4A8", cursor: "pointer", fontFamily: "inherit" }}>
-              View the Space →
-            </button>
+    <ErrorBoundary>
+      <div style={S.page}>
+        <header style={{ ...S.hero, paddingBottom: settings.heroImage ? "28px" : "44px" }}>
+          <p style={S.heroSub}>Estate Sale · Atlanta, Georgia</p>
+          <h1 style={S.heroTitle}>Everything <em style={S.heroItalic}>Must Go</em></h1>
+          <div style={S.pills}>
+            <span style={S.pill}>Open House: {settings.openHouse}</span>
+            <span style={S.pill}>{settings.address}</span>
+            {photos.length > 0 && (
+              <button onClick={onGalleryClick}
+                style={{ ...S.pill, background: "rgba(196,82,42,0.25)", border: "1px solid rgba(196,82,42,0.5)", color: "#F0C4A8", cursor: "pointer", fontFamily: "inherit" }}>
+                View the Space →
+              </button>
+            )}
+          </div>
+          <div style={S.notice}>
+            <strong style={S.noticeStrong}>How it works:</strong> Small items leave same day with payment. Large furniture requires a <strong style={S.noticeStrong}>non-refundable 40% deposit</strong> to hold — pickup by <strong style={S.noticeStrong}>{settings.pickupDeadline}</strong> or deposit is forfeited.
+          </div>
+        </header>
+
+        {settings.heroImage && <HeroImage src={settings.heroImage} />}
+
+        <div style={S.searchWrap}>
+          <input style={S.searchInput} placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+
+        <div style={S.filterBar}>
+          <div style={S.filterRow}>
+            <span style={S.filterLabel}>Room:</span>
+            <button style={S.filterBtn(roomFilter === "all")} onClick={() => setRoomFilter("all")}>All</button>
+            {allRooms.map(r => (
+              <button key={r} style={S.filterBtn(roomFilter === r)} onClick={() => setRoomFilter(r)}>{r}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={S.statsBar}>
+          <span style={{ fontWeight: 600 }}>{available}</span> available · <span style={{ color: "#FFD4C0" }}>{sold}</span> sold · {items.length} total items
+        </div>
+
+        <div>
+          {filteredRooms.map(room => {
+            const roomItems = filtered.filter(i => i.room === room);
+            if (!roomItems.length) return null;
+            return (
+              <div key={room}>
+                <div style={S.roomHeader}>
+                  <h2 style={S.roomTitle}>{room}</h2>
+                  <span style={S.roomCount}>{roomItems.length} item{roomItems.length !== 1 ? "s" : ""}</span>
+                </div>
+                <div style={S.grid}>
+                  {roomItems.map(item => (
+                    <ErrorBoundary key={item.id}>
+                      <ItemCard item={item} settings={settings} />
+                    </ErrorBoundary>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {filteredRooms.length === 0 && (
+            <p style={{ padding: "40px", textAlign: "center", color: "#9A9A90" }}>No items found.</p>
           )}
         </div>
-        <div style={S.notice}>
-          <strong style={S.noticeStrong}>How it works:</strong> Small items leave same day with payment. Large furniture requires a <strong style={S.noticeStrong}>non-refundable 40% deposit</strong> to hold — pickup by <strong style={S.noticeStrong}>{settings.pickupDeadline}</strong> or deposit is forfeited.
+
+        <footer style={S.footer}>
+          <h3 style={S.footerTitle}>Questions & Payment</h3>
+          <p style={S.footerText}>{settings.footerNote}</p>
+          <div style={S.payRow}>
+            <a href={settings.venmo} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Venmo {settings.venmoHandle}</a>
+            <a href={settings.paypal} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>PayPal {settings.paypalHandle}</a>
+            <a href={settings.cashapp} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Cash App {settings.cashappHandle}</a>
+            <span style={S.payPill}>Zelle — scan QR at door</span>
+          </div>
+        </footer>
+
+        <div style={{ textAlign: "center", padding: "12px", background: "#F2EFE9", borderTop: "1px solid #E0DBD3" }}>
+          <button onClick={onAdminClick}
+            style={{ background: "transparent", border: "none", color: "#C8C4BC", fontSize: "0.67rem", letterSpacing: "0.1em", cursor: "pointer", textTransform: "uppercase" }}>
+            Admin
+          </button>
         </div>
-      </header>
-
-      {settings.heroImage && <HeroImage src={settings.heroImage} />}
-
-      <div style={S.searchWrap}>
-        <input style={S.searchInput} placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-
-      <div style={S.filterBar}>
-        <div style={S.filterRow}>
-          <span style={S.filterLabel}>Room:</span>
-          <button style={S.filterBtn(roomFilter === "all")} onClick={() => setRoomFilter("all")}>All</button>
-          {allRooms.map(r => <button key={r} style={S.filterBtn(roomFilter === r)} onClick={() => setRoomFilter(r)}>{r}</button>)}
-        </div>
-      </div>
-
-      <div style={S.statsBar}>
-        <span style={{ fontWeight: 600 }}>{available}</span> available · <span style={{ color: "#FFD4C0" }}>{sold}</span> sold · {items.length} total items
-      </div>
-
-      <div>
-        {rooms.map(room => {
-          const roomItems = filtered.filter(i => i.room === room);
-          if (!roomItems.length) return null;
-          return (
-            <div key={room}>
-              <div style={S.roomHeader}>
-                <h2 style={S.roomTitle}>{room}</h2>
-                <span style={S.roomCount}>{roomItems.length} item{roomItems.length !== 1 ? "s" : ""}</span>
-              </div>
-              <div style={S.grid}>{roomItems.map(item => <ItemCard key={item.id} item={item} settings={settings} />)}</div>
-            </div>
-          );
-        })}
-        {rooms.length === 0 && <p style={{ padding: "40px", textAlign: "center", color: "#9A9A90" }}>No items found.</p>}
-      </div>
-
-      <footer style={S.footer}>
-        <h3 style={S.footerTitle}>Questions & Payment</h3>
-        <p style={S.footerText}>{settings.footerNote}</p>
-        <div style={S.payRow}>
-          <a href={settings.venmo} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Venmo {settings.venmoHandle}</a>
-          <a href={settings.paypal} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>PayPal {settings.paypalHandle}</a>
-          <a href={settings.cashapp} target="_blank" rel="noopener" style={{ ...S.payPill, textDecoration: "none" }}>Cash App {settings.cashappHandle}</a>
-          <span style={S.payPill}>Zelle — scan QR at door</span>
-        </div>
-      </footer>
-
-      <div style={{ textAlign: "center", padding: "12px", background: "#F2EFE9", borderTop: "1px solid #E0DBD3" }}>
-        <button onClick={onAdminClick} style={{ background: "transparent", border: "none", color: "#C8C4BC", fontSize: "0.67rem", letterSpacing: "0.1em", cursor: "pointer", textTransform: "uppercase" }}>Admin</button>
-      </div>
-    </div>
+    </ErrorBoundary>
   );
 }
 
+// ─── ITEM CARD ────────────────────────────────────────────────────────────────
 function ItemCard({ item, settings }) {
+  const statusCfg = getStatus(item.status);
+  const savingsPct = pct(item.sale, item.retail);
   return (
     <div style={S.card(item.status)}>
       {item.status === "sold" && <div style={S.soldStamp}>Sold</div>}
       <div style={S.photoBox}>
         {item.photo
-          ? <img src={item.photo} alt={item.name} style={S.photoImg} onError={e => { e.target.style.display = "none"; }} />
-          : <span style={S.photoPlaceholder}>No photo yet</span>}
+          ? <img src={item.photo} alt={item.name} style={S.photoImg} onError={e => { e.currentTarget.style.display = "none"; }} />
+          : <span style={S.photoPlaceholder}>No photo yet</span>
+        }
       </div>
       <div style={S.itemName}>
         {item.name}
         {item.link && <a href={item.link} target="_blank" rel="noopener" style={S.itemLink}>↗ view</a>}
       </div>
       <div style={S.metaRow}>
-        <span style={S.badge(STATUS_CONFIG[item.status])}>{STATUS_CONFIG[item.status].label}</span>
+        <span style={S.badge(statusCfg)}>{statusCfg.label}</span>
         {item.large && item.status === "available" && <span style={S.depositBadge}>Deposit: {fmt(item.deposit)}</span>}
         {item.large && <span style={S.pickupNote}>Pickup by {settings.pickupDeadline}</span>}
       </div>
       <div style={S.priceBlock}>
         <span style={S.salePrice}>{fmt(item.sale)}</span>
         <span style={S.origPrice}>{fmt(item.retail)}</span>
-        <span style={S.savingsPct}>save {pct(item.sale, item.retail)}%</span>
+        {savingsPct > 0 && <span style={S.savingsPct}>save {savingsPct}%</span>}
       </div>
     </div>
   );
@@ -481,17 +729,25 @@ function ItemCard({ item, settings }) {
 function AdminLogin({ onSuccess, onBack }) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
-  function submit() { pw === ADMIN_PASSWORD ? onSuccess() : setErr("Incorrect password."); }
+  function submit() {
+    if (pw === ADMIN_PASSWORD) { onSuccess(); }
+    else { setErr("Incorrect password."); }
+  }
   return (
     <div style={S.loginWrap}>
       <div style={S.loginBox}>
         <div style={S.loginTitle}>Admin</div>
         <div style={S.loginSub}>Sale Management</div>
-        <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} style={S.loginInput} />
+        <input type="password" placeholder="Password" value={pw}
+          onChange={e => setPw(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && submit()}
+          style={S.loginInput} />
         <button onClick={submit} style={S.loginBtn}>Enter</button>
         {err && <div style={S.loginErr}>{err}</div>}
         <div style={{ marginTop: "16px" }}>
-          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8A8A82", fontSize: "0.72rem", cursor: "pointer", textDecoration: "underline" }}>← Back to sale</button>
+          <button onClick={onBack} style={{ background: "none", border: "none", color: "#8A8A82", fontSize: "0.72rem", cursor: "pointer", textDecoration: "underline" }}>
+            ← Back to sale
+          </button>
         </div>
       </div>
     </div>
@@ -499,20 +755,40 @@ function AdminLogin({ onSuccess, onBack }) {
 }
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
-function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettings, onBack }) {
-  const [localItems, setLocalItems] = useState(items.map(i => ({ ...i })));
-  const [localPhotos, setLocalPhotos] = useState(photos.map(p => ({ ...p })));
-  const [localSettings, setLocalSettings] = useState({ ...settings });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState(false);
+function AdminPanel({ items, setItems, photos, setPhotos, settings, setSettings, onBack }) {
+  // Local copies — changes here don't affect the public view until saved
+  const [localItems, setLocalItems] = useState(() => items.map(i => ({ ...i })));
+  const [localPhotos, setLocalPhotos] = useState(() => photos.map(p => ({ ...p })));
+  const [localSettings, setLocalSettings] = useState(() => ({ ...settings }));
+  const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
+  const [saveMsg, setSaveMsg] = useState("");
+  const [isDirty, setIsDirty] = useState(false);
+  const saveLock = useRef(false);
+  const [activeTab, setActiveTab] = useState("items");
   const [roomFilter, setRoomFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [activeTab, setActiveTab] = useState("items");
-  const [newItem, setNewItem] = useState({ room: ROOMS[0], name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
+  const [newItem, setNewItem] = useState({ room: "", name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
   const [newPhotoCaption, setNewPhotoCaption] = useState("");
+
+  // Warn before closing with unsaved changes
+  // Note: beforeunload is unreliable on mobile Safari but works on desktop/Chrome
+  useEffect(() => {
+    function handleBeforeUnload(e) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = "You have unsaved changes. Are you sure you want to leave?";
+      return e.returnValue;
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  function markDirty() { setIsDirty(true); setSaveState("idle"); }
+
+  // Dynamic room list from actual items (not hardcoded)
+  const allRooms = useMemo(() => [...new Set(localItems.map(i => i.room))].filter(Boolean), [localItems]);
 
   const visibleItems = useMemo(() => localItems.filter(item => {
     const matchRoom = roomFilter === "all" || item.room === roomFilter;
@@ -520,81 +796,155 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
     return matchRoom && matchSearch;
   }), [localItems, roomFilter, search]);
 
-  function updateItem(id, field, value) { setLocalItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i)); setSaved(false); }
-  function deleteItem(id) { if (!confirm("Delete this item?")) return; setLocalItems(prev => prev.filter(i => i.id !== id)); setSaved(false); }
-
-  function normalizePhotoUrl(url) {
-    if (url.includes("dropbox.com")) {
-      return url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace(/[?&]dl=\d/, "").replace(/[?&]raw=\d/, "");
-    }
-    return url;
+  function updateItem(id, field, value) {
+    setLocalItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
+    markDirty();
   }
 
-  function addPhoto() {
-    if (!newPhotoUrl.trim()) return;
-    setLocalPhotos(prev => [...prev, { id: Date.now(), url: normalizePhotoUrl(newPhotoUrl.trim()), caption: newPhotoCaption.trim() }]);
-    setNewPhotoUrl(""); setNewPhotoCaption(""); setSaved(false);
-  }
-  function deletePhoto(id) { setLocalPhotos(prev => prev.filter(p => p.id !== id)); setSaved(false); }
-  function movePhoto(id, dir) {
-    setLocalPhotos(prev => {
-      const idx = prev.findIndex(p => p.id === id);
-      const next = idx + dir;
-      if (next < 0 || next >= prev.length) return prev;
-      const arr = [...prev]; [arr[idx], arr[next]] = [arr[next], arr[idx]]; return arr;
-    });
-    setSaved(false);
-  }
-  function updatePhotoCaption(id, caption) { setLocalPhotos(prev => prev.map(p => p.id === id ? { ...p, caption } : p)); setSaved(false); }
-
-  async function handleSave() {
-    setSaving(true);
-    setSaved(false);
-    setSaveError(false);
-    try {
-      await Promise.all([
-        saveItems(localItems),
-        savePhotos(localPhotos),
-        saveSettings(localSettings),
-      ]);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 4000);
-    } catch(e) {
-      console.error("Save failed:", e);
-      setSaveError(true);
-      setTimeout(() => setSaveError(false), 6000);
-    }
-    setSaving(false);
+  function deleteItem(id) {
+    if (!confirm("Delete this item? This cannot be undone until you save.")) return;
+    setLocalItems(prev => prev.filter(i => i.id !== id));
+    markDirty();
   }
 
   function addItem() {
     if (!newItem.name.trim()) return;
-    const item = { ...newItem, id: Date.now(), retail: Number(newItem.retail) || 0, sale: Number(newItem.sale) || 0, deposit: Number(newItem.deposit) || 0 };
+    const id = newId();
+    const item = {
+      ...newItem,
+      id,
+      room: newItem.room || allRooms[0] || "Miscellaneous",
+      retail: Number(newItem.retail) || 0,
+      sale: Number(newItem.sale) || 0,
+      deposit: Number(newItem.deposit) || 0,
+      photo: normalizeUrl(newItem.photo),
+    };
     setLocalItems(prev => [...prev, item]);
-    setNewItem({ room: ROOMS[0], name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
-    setShowAddForm(false); setSaved(false);
+    setNewItem({ room: "", name: "", retail: "", sale: "", deposit: 0, large: false, status: "available", photo: "", link: "" });
+    setShowAddForm(false);
+    markDirty();
+  }
+
+  function addPhoto() {
+    if (!newPhotoUrl.trim()) return;
+    setLocalPhotos(prev => [...prev, { id: newId(), url: normalizeUrl(newPhotoUrl.trim()), caption: newPhotoCaption.trim() }]);
+    setNewPhotoUrl(""); setNewPhotoCaption("");
+    markDirty();
+  }
+
+  function deletePhoto(id) {
+    setLocalPhotos(prev => prev.filter(p => p.id !== id));
+    markDirty();
+  }
+
+  function movePhoto(id, dir) {
+    setLocalPhotos(prev => {
+      const arr = [...prev];
+      const idx = arr.findIndex(p => p.id === id);
+      const next = idx + dir;
+      if (next < 0 || next >= arr.length) return prev;
+      [arr[idx], arr[next]] = [arr[next], arr[idx]];
+      return arr;
+    });
+    markDirty();
+  }
+
+  function updatePhotoCaption(id, caption) {
+    setLocalPhotos(prev => prev.map(p => p.id === id ? { ...p, caption } : p));
+    markDirty();
+  }
+
+  // Save items + photos only (settings are saved separately via handleSaveSettings)
+  async function handleSave() {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    setSaveState("saving"); setSaveMsg("");
+    try {
+      await db.saveItems(localItems);
+      await db.savePhotos(localPhotos);
+      setItems(localItems);
+      setPhotos(localPhotos);
+      setIsDirty(false);
+      setSaveState("saved"); setSaveMsg("All changes saved ✓");
+      setTimeout(() => { setSaveState("idle"); setSaveMsg(""); }, 5000);
+    } catch(e) {
+      console.error("Save failed:", e);
+      setSaveState("error"); setSaveMsg(e.message || "Save failed");
+      alert(`Save failed: ${e.message}\n\nDo NOT close this window. Your unsaved changes are still here. Try saving again.`);
+    }
+    saveLock.current = false;
+  }
+
+  // Save settings only (used from Settings tab)
+  async function handleSaveSettings() {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    setSaveState("saving"); setSaveMsg("");
+    try {
+      await db.saveSettings(localSettings);
+      setSettings(localSettings);
+      setIsDirty(false);
+      setSaveState("saved"); setSaveMsg("Settings saved ✓");
+      setTimeout(() => { setSaveState("idle"); setSaveMsg(""); }, 5000);
+    } catch(e) {
+      console.error("Settings save failed:", e);
+      setSaveState("error"); setSaveMsg(e.message || "Save failed");
+      alert(`Settings save failed: ${e.message}\n\nDo NOT close this window. Try saving again.`);
+    }
+    saveLock.current = false;
+  }
+
+  function handleBack() {
+    if (isDirty) {
+      if (!confirm("You have unsaved changes. Go back anyway? Your changes will be lost.")) return;
+    }
+    onBack();
   }
 
   const stats = {
     available: localItems.filter(i => i.status === "available").length,
     deposit: localItems.filter(i => i.status === "deposit").length,
     sold: localItems.filter(i => i.status === "sold").length,
-    revenue: localItems.filter(i => i.status !== "available").reduce((s, i) => s + i.sale, 0),
+    revenue: localItems.filter(i => i.status !== "available").reduce((s, i) => s + (Number(i.sale) || 0), 0),
   };
+
+  const saveBtnLabel = saveState === "saving" ? "Saving…"
+    : saveState === "saved" ? "Saved ✓"
+    : saveState === "error" ? "Save Failed — Retry"
+    : isDirty ? (activeTab === "settings" ? "Save Settings" : "Save All") : "No Changes";
 
   return (
     <div style={S.adminWrap}>
+      {/* Header */}
       <div style={S.adminHeader}>
         <h1 style={S.adminTitle}>Sale Admin</h1>
+        {isDirty && <span style={{ fontSize: "0.68rem", color: "#F0C4A8", letterSpacing: "0.08em" }}>● Unsaved changes</span>}
         <div style={{ display: "flex", gap: "8px" }}>
-          <button onClick={handleSave} style={{ ...S.adminSaveBtn, background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>{saving ? "Saving…" : saveError ? "Save Failed ✗" : saved ? "Saved ✓" : "Save All"}</button>
-          <button onClick={onBack} style={{ ...S.adminSaveBtn, background: "#4A4A44" }}>← Public View</button>
+          <button
+            onClick={activeTab === "settings" ? handleSaveSettings : handleSave}
+            disabled={saveState === "saving" || (!isDirty && saveState !== "error")}
+            style={{ ...S.adminSaveBtn(saveState), opacity: (!isDirty && saveState === "idle") ? 0.5 : 1 }}>
+            {saveBtnLabel}
+          </button>
+          <button onClick={handleBack} style={S.adminSaveBtn("idle")}>← Back</button>
         </div>
       </div>
 
+      {/* Save message banner */}
+      {saveMsg && (
+        <div style={{ background: saveState === "error" ? "#FEF0F0" : "#EAF2EC", borderBottom: `1px solid ${saveState === "error" ? "#F0C4C4" : "#B0D4BA"}`, padding: "10px 20px", fontSize: "0.78rem", color: saveState === "error" ? "#8B2020" : "#1A5C2A", letterSpacing: "0.04em" }}>
+          {saveMsg}
+        </div>
+      )}
+
       {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1px", background: "#E0DBD3", borderBottom: "1px solid #E0DBD3" }}>
-        {[{ label: "Available", val: stats.available, color: "#1A5C2A" }, { label: "Deposit Taken", val: stats.deposit, color: "#C4522A" }, { label: "Sold", val: stats.sold, color: "#4A4A44" }, { label: "Revenue", val: fmt(stats.revenue), color: "#C4522A" }].map(s => (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1px", background: "#E0DBD3" }}>
+        {[
+          { label: "Available", val: stats.available, color: "#1A5C2A" },
+          { label: "Deposit Taken", val: stats.deposit, color: "#C4522A" },
+          { label: "Sold", val: stats.sold, color: "#4A4A44" },
+          { label: "Revenue", val: fmt(stats.revenue), color: "#C4522A" },
+        ].map(s => (
           <div key={s.label} style={{ background: "#FAFAF8", padding: "14px 16px", textAlign: "center" }}>
             <div style={{ fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "#8A8A82", marginBottom: "4px" }}>{s.label}</div>
             <div style={{ fontSize: "1.4rem", fontWeight: 500, color: s.color }}>{s.val}</div>
@@ -605,38 +955,45 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
       {/* Tabs */}
       <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", display: "flex" }}>
         {["items", "photos", "settings"].map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} style={{ background: "transparent", border: "none", borderBottom: `2px solid ${activeTab === tab ? "#C4522A" : "transparent"}`, padding: "12px 20px", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.1em", textTransform: "uppercase", color: activeTab === tab ? "#C4522A" : "#6B6B65", cursor: "pointer", fontWeight: activeTab === tab ? 500 : 400 }}>
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            style={{ background: "transparent", border: "none", borderBottom: `2px solid ${activeTab === tab ? "#C4522A" : "transparent"}`, padding: "12px 20px", fontFamily: "inherit", fontSize: "0.78rem", letterSpacing: "0.1em", textTransform: "uppercase", color: activeTab === tab ? "#C4522A" : "#6B6B65", cursor: "pointer", fontWeight: activeTab === tab ? 500 : 400 }}>
             {tab === "items" ? `Items (${localItems.length})` : tab === "photos" ? `Photos (${localPhotos.length})` : "Settings"}
           </button>
         ))}
       </div>
 
-      {/* Photos Tab */}
+      {/* ── PHOTOS TAB ── */}
       {activeTab === "photos" && (
         <div>
           <div style={{ background: "#FEF3EE", borderBottom: "1px solid #E0DBD3", padding: "16px 20px" }}>
             <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>Add Apartment Photo</div>
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: "10px", alignItems: "end" }}>
               <div>
-                <div style={S.adminLabel}>Image URL (Dropbox, Imgur, Google Photos…)</div>
-                <input style={S.adminInput} value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)} placeholder="Paste any image link — Dropbox links auto-converted" onKeyDown={e => e.key === "Enter" && addPhoto()} />
+                <div style={S.adminLabel}>Image URL — Dropbox links auto-converted</div>
+                <input style={S.adminInput} value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)}
+                  placeholder="Paste any image URL" onKeyDown={e => e.key === "Enter" && addPhoto()} />
               </div>
               <div>
                 <div style={S.adminLabel}>Caption (optional)</div>
-                <input style={S.adminInput} value={newPhotoCaption} onChange={e => setNewPhotoCaption(e.target.value)} placeholder="e.g. Living room" onKeyDown={e => e.key === "Enter" && addPhoto()} />
+                <input style={S.adminInput} value={newPhotoCaption} onChange={e => setNewPhotoCaption(e.target.value)}
+                  placeholder="e.g. Living room" onKeyDown={e => e.key === "Enter" && addPhoto()} />
               </div>
               <button onClick={addPhoto} style={S.adminAddBtn}>Add</button>
             </div>
           </div>
           {localPhotos.length === 0
-            ? <div style={{ padding: "48px", textAlign: "center", color: "#8A8A82", fontSize: "0.85rem" }}>No photos yet. Add your first apartment photo above.</div>
+            ? <div style={{ padding: "48px", textAlign: "center", color: "#8A8A82" }}>No photos yet.</div>
             : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: "1px", background: "#E0DBD3" }}>
                 {localPhotos.map((photo, idx) => (
                   <div key={photo.id} style={S.adminCard}>
                     <div style={{ width: "100%", height: "140px", background: "#F2EFE9", borderRadius: "3px", overflow: "hidden" }}>
-                      <img src={photo.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.opacity = 0.15; }} />
+                      <img src={photo.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        onError={e => { e.currentTarget.style.opacity = "0.15"; }} />
                     </div>
-                    <div><div style={S.adminLabel}>Caption</div><input style={S.adminInput} value={photo.caption} onChange={e => updatePhotoCaption(photo.id, e.target.value)} placeholder="e.g. Living room" /></div>
+                    <div>
+                      <div style={S.adminLabel}>Caption</div>
+                      <input style={S.adminInput} value={photo.caption} onChange={e => updatePhotoCaption(photo.id, e.target.value)} placeholder="e.g. Living room" />
+                    </div>
                     <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                       <span style={{ fontSize: "0.67rem", color: "#8A8A82", flex: 1 }}>Photo {idx + 1} of {localPhotos.length}</span>
                       <button onClick={() => movePhoto(photo.id, -1)} disabled={idx === 0} style={{ ...S.adminDeleteBtn, opacity: idx === 0 ? 0.3 : 1 }}>↑</button>
@@ -647,10 +1004,16 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
                 ))}
               </div>
           }
+          <div style={{ padding: "20px", textAlign: "center" }}>
+            <button onClick={handleSave} disabled={saveState === "saving" || (!isDirty && saveState !== "error")}
+              style={{ ...S.adminSaveBtn(saveState), padding: "10px 32px", fontSize: "0.85rem", opacity: (!isDirty && saveState === "idle") ? 0.5 : 1 }}>
+              {saveBtnLabel}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Settings Tab */}
+      {/* ── SETTINGS TAB ── */}
       {activeTab === "settings" && (
         <div style={{ padding: "24px 20px", maxWidth: "600px" }}>
           <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.2rem", color: "#1C1C1A", marginBottom: "20px" }}>Site Settings</div>
@@ -658,139 +1021,174 @@ function AdminPanel({ items, saveItems, photos, savePhotos, settings, saveSettin
             { label: "Open House Dates & Times", key: "openHouse", placeholder: "e.g. May 16–17, 10am–4pm" },
             { label: "Pickup Deadline", key: "pickupDeadline", placeholder: "e.g. May 28, 2025" },
             { label: "Address / Location", key: "address", placeholder: "e.g. The Indie, Unit 1107" },
-            { label: "Hero Image URL (shown below header)", key: "heroImage", placeholder: "Paste any image URL — Dropbox links auto-converted" },
-            { label: "Footer Note", key: "footerNote", placeholder: "Payment and pickup info shown in footer", wide: true },
+            { label: "Hero Image URL (shown below header — Dropbox auto-converted)", key: "heroImage", placeholder: "Paste any image URL" },
+            { label: "Footer Note", key: "footerNote", placeholder: "Payment info shown in footer", wide: true },
           ].map(f => (
             <div key={f.key} style={{ marginBottom: "16px" }}>
               <div style={S.adminLabel}>{f.label}</div>
               {f.wide
-                ? <textarea style={{ ...S.adminInput, height: "72px", resize: "vertical" }} value={localSettings[f.key]} onChange={e => setLocalSettings(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} />
-                : <input style={S.adminInput} value={localSettings[f.key]} onChange={e => setLocalSettings(p => ({ ...p, [f.key]: f.key === "heroImage" ? normalizePhotoUrl(e.target.value) : e.target.value }))} placeholder={f.placeholder} />
+                ? <textarea style={{ ...S.adminInput, height: "72px", resize: "vertical" }}
+                    value={localSettings[f.key] || ""} onChange={e => { setLocalSettings(p => ({ ...p, [f.key]: e.target.value })); markDirty(); }}
+                    placeholder={f.placeholder} />
+                : <input style={S.adminInput}
+                    value={localSettings[f.key] || ""}
+                    onChange={e => { setLocalSettings(p => ({ ...p, [f.key]: f.key === "heroImage" ? normalizeUrl(e.target.value) : e.target.value })); markDirty(); }}
+                    placeholder={f.placeholder} />
               }
             </div>
           ))}
           <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1rem", color: "#1C1C1A", margin: "24px 0 16px" }}>Payment Links</div>
           {[
-            { label: "Venmo Handle (display)", key: "venmoHandle", placeholder: "@Sarah-Sadd" },
-            { label: "Venmo URL", key: "venmo", placeholder: "https://venmo.com/u/…" },
-            { label: "PayPal Handle (display)", key: "paypalHandle", placeholder: "@sarahsadd" },
-            { label: "PayPal URL", key: "paypal", placeholder: "https://paypal.me/…" },
-            { label: "Cash App Handle (display)", key: "cashappHandle", placeholder: "$supersadd" },
-            { label: "Cash App URL", key: "cashapp", placeholder: "https://cash.app/$…" },
+            { label: "Venmo Handle (display)", key: "venmoHandle" },
+            { label: "Venmo URL", key: "venmo" },
+            { label: "PayPal Handle (display)", key: "paypalHandle" },
+            { label: "PayPal URL", key: "paypal" },
+            { label: "Cash App Handle (display)", key: "cashappHandle" },
+            { label: "Cash App URL", key: "cashapp" },
           ].map(f => (
             <div key={f.key} style={{ marginBottom: "14px" }}>
               <div style={S.adminLabel}>{f.label}</div>
-              <input style={S.adminInput} value={localSettings[f.key]} onChange={e => setLocalSettings(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} />
+              <input style={S.adminInput} value={localSettings[f.key] || ""}
+                onChange={e => { setLocalSettings(p => ({ ...p, [f.key]: e.target.value })); markDirty(); }} />
             </div>
           ))}
           <div style={{ marginTop: "24px" }}>
-            <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem", background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>
-              {saving ? "Saving…" : saveError ? "Save Failed — Try Again" : saved ? "Saved ✓" : "Save Settings"}
+            <button onClick={handleSaveSettings} disabled={saveState === "saving" || (!isDirty && saveState !== "error")}
+              style={{ ...S.adminSaveBtn(saveState), padding: "10px 32px", fontSize: "0.85rem", opacity: (!isDirty && saveState === "idle") ? 0.5 : 1 }}>
+              {saveBtnLabel}
             </button>
           </div>
         </div>
       )}
 
-      {/* Items Tab */}
-      {activeTab === "items" && <div>
-        <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "10px 16px", display: "flex", gap: "8px", overflowX: "auto" }}>
-          <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.adminInput, width: "180px", flexShrink: 0 }} />
-          <select value={roomFilter} onChange={e => setRoomFilter(e.target.value)} style={{ ...S.adminSelect, width: "auto" }}>
-            <option value="all">All Rooms</option>
-            {ROOMS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-          <button onClick={() => setShowAddForm(v => !v)} style={S.adminAddBtn}>+ Add Item</button>
-        </div>
-
-        {showAddForm && (
-          <div style={{ background: "#FEF3EE", borderBottom: "1px solid #E0DBD3", padding: "16px 20px" }}>
-            <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>New Item</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" }}>
-              <div><div style={S.adminLabel}>Name</div><input style={S.adminInput} value={newItem.name} onChange={e => setNewItem(p => ({ ...p, name: e.target.value }))} placeholder="Item name" /></div>
-              <div>
-                <div style={S.adminLabel}>Room / Category</div>
-                <input style={S.adminInput} list="room-options" value={newItem.room} onChange={e => setNewItem(p => ({ ...p, room: e.target.value }))} placeholder="Select or type a new category" />
-                <datalist id="room-options">{[...new Set(localItems.map(i => i.room))].map(r => <option key={r} value={r} />)}</datalist>
-              </div>
-              <div><div style={S.adminLabel}>Retail $</div><input style={S.adminInput} type="number" value={newItem.retail} onChange={e => setNewItem(p => ({ ...p, retail: e.target.value }))} /></div>
-              <div><div style={S.adminLabel}>Sale $</div><input style={S.adminInput} type="number" value={newItem.sale} onChange={e => setNewItem(p => ({ ...p, sale: e.target.value }))} /></div>
-              <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={newItem.photo} onChange={e => setNewItem(p => ({ ...p, photo: normalizePhotoUrl(e.target.value) }))} placeholder="https://…" /></div>
-              <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={newItem.link} onChange={e => setNewItem(p => ({ ...p, link: e.target.value }))} placeholder="https://…" /></div>
-            </div>
-            <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
-              <label style={{ fontSize: "0.78rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}><input type="checkbox" checked={newItem.large} onChange={e => setNewItem(p => ({ ...p, large: e.target.checked }))} /> Large item (requires pickup)</label>
-              <button onClick={addItem} style={S.adminAddBtn}>Add Item</button>
-              <button onClick={() => setShowAddForm(false)} style={S.adminDeleteBtn}>Cancel</button>
-            </div>
+      {/* ── ITEMS TAB ── */}
+      {activeTab === "items" && (
+        <div>
+          {/* Filter + search bar */}
+          <div style={{ background: "#F2EFE9", borderBottom: "1px solid #E0DBD3", padding: "10px 16px", display: "flex", gap: "8px", overflowX: "auto" }}>
+            <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)}
+              style={{ ...S.adminInput, width: "180px", flexShrink: 0 }} />
+            <select value={roomFilter} onChange={e => setRoomFilter(e.target.value)} style={{ ...S.adminSelect, width: "auto" }}>
+              <option value="all">All Rooms</option>
+              {allRooms.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <button onClick={() => setShowAddForm(v => !v)} style={S.adminAddBtn}>+ Add Item</button>
           </div>
-        )}
 
-        <div style={S.adminGrid} id="items-drag-container">
-          {visibleItems.map((item, idx) => (
-            <div key={item.id} style={{ ...S.adminCard, cursor: "grab", borderTop: "2px solid transparent" }}
-              draggable
-              onDragStart={e => { e.dataTransfer.setData("itemId", String(item.id)); e.currentTarget.style.opacity = "0.5"; }}
-              onDragEnd={e => { e.currentTarget.style.opacity = "1"; }}
-              onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderTop = "2px solid #C4522A"; }}
-              onDragLeave={e => { e.currentTarget.style.borderTop = "2px solid transparent"; }}
-              onDrop={e => {
-                e.preventDefault();
-                e.currentTarget.style.borderTop = "2px solid transparent";
-                const fromId = Number(e.dataTransfer.getData("itemId"));
-                const toId = item.id;
-                if (fromId === toId) return;
-                setLocalItems(prev => {
-                  const arr = [...prev];
-                  const fromIdx = arr.findIndex(i => i.id === fromId);
-                  const toIdx = arr.findIndex(i => i.id === toId);
-                  const [moved] = arr.splice(fromIdx, 1);
-                  arr.splice(toIdx, 0, moved);
-                  return arr;
-                });
-                setSaved(false);
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "8px" }}>
-                <div style={{ fontSize: "0.72rem", color: "#B0A898", letterSpacing: "0.05em", marginTop: "2px", flexShrink: 0 }}>⠿</div>
-                <div style={{ flex: 1 }}>
+          {/* Add item form */}
+          {showAddForm && (
+            <div style={{ background: "#FEF3EE", borderBottom: "1px solid #E0DBD3", padding: "16px 20px" }}>
+              <div style={{ fontFamily: "'DM Serif Display',serif", fontSize: "1.1rem", color: "#C4522A", marginBottom: "12px" }}>New Item</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" }}>
+                <div>
                   <div style={S.adminLabel}>Name</div>
-                  <input style={{ ...S.adminInput, fontWeight: 500 }} value={item.name} onChange={e => updateItem(item.id, "name", e.target.value)} />
+                  <input style={S.adminInput} value={newItem.name} onChange={e => setNewItem(p => ({ ...p, name: e.target.value }))} placeholder="Item name" />
                 </div>
-                <button onClick={() => deleteItem(item.id)} style={{ ...S.adminDeleteBtn, flexShrink: 0, marginTop: "18px" }}>✕</button>
+                <div>
+                  <div style={S.adminLabel}>Room / Category</div>
+                  <input style={S.adminInput} list="room-options-new" value={newItem.room}
+                    onChange={e => setNewItem(p => ({ ...p, room: e.target.value }))} placeholder="Select or type new" />
+                  <datalist id="room-options-new">{allRooms.map(r => <option key={r} value={r} />)}</datalist>
+                </div>
+                <div><div style={S.adminLabel}>Retail $</div><input style={S.adminInput} type="number" value={newItem.retail} onChange={e => setNewItem(p => ({ ...p, retail: e.target.value }))} /></div>
+                <div><div style={S.adminLabel}>Sale $</div><input style={S.adminInput} type="number" value={newItem.sale} onChange={e => setNewItem(p => ({ ...p, sale: e.target.value }))} /></div>
+                <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={newItem.photo} onChange={e => setNewItem(p => ({ ...p, photo: normalizeUrl(e.target.value) }))} placeholder="https://…" /></div>
+                <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={newItem.link} onChange={e => setNewItem(p => ({ ...p, link: e.target.value }))} placeholder="https://…" /></div>
               </div>
-              <div>
-                <div style={S.adminLabel}>Room / Category</div>
-                <input style={S.adminInput} list="room-options" value={item.room} onChange={e => updateItem(item.id, "room", e.target.value)} placeholder="Select or type new" />
+              <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
+                <label style={{ fontSize: "0.78rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}>
+                  <input type="checkbox" checked={newItem.large} onChange={e => setNewItem(p => ({ ...p, large: e.target.checked }))} />
+                  Large item (requires pickup)
+                </label>
+                <button onClick={addItem} style={S.adminAddBtn}>Add Item</button>
+                <button onClick={() => setShowAddForm(false)} style={S.adminDeleteBtn}>Cancel</button>
               </div>
-              <div><div style={S.adminLabel}>Status</div>
-                <select style={S.adminSelect} value={item.status} onChange={e => updateItem(item.id, "status", e.target.value)}>
-                  <option value="available">Available</option>
-                  <option value="deposit">Deposit Taken</option>
-                  <option value="sold">Sold</option>
-                </select>
-              </div>
-              <div style={S.adminRow}>
-                <div><div style={S.adminLabel}>Sale Price $</div><input style={S.adminInput} type="number" value={item.sale} onChange={e => updateItem(item.id, "sale", Number(e.target.value))} /></div>
-                <div><div style={S.adminLabel}>Deposit $</div><input style={S.adminInput} type="number" value={item.deposit} onChange={e => updateItem(item.id, "deposit", Number(e.target.value))} /></div>
-              </div>
-              <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={item.photo} onChange={e => updateItem(item.id, "photo", normalizePhotoUrl(e.target.value))} placeholder="https://…" /></div>
-              <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={item.link} onChange={e => updateItem(item.id, "link", e.target.value)} placeholder="https://…" /></div>
-              <label style={{ fontSize: "0.75rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}><input type="checkbox" checked={item.large} onChange={e => updateItem(item.id, "large", e.target.checked)} /> Large item (requires deposit + pickup)</label>
             </div>
-          ))}
-        </div>
+          )}
 
-        <div style={{ padding: "20px", textAlign: "center" }}>
-          <button onClick={handleSave} style={{ ...S.adminSaveBtn, padding: "10px 32px", fontSize: "0.85rem", background: saveError ? "#8B2020" : saved ? "#1A5C2A" : "#1C1C1A" }}>
-            {saving ? "Saving…" : saveError ? "Save Failed — Try Again" : saved ? "All Changes Saved ✓" : "Save All Changes"}
-          </button>
+          {/* Drag-and-drop item grid */}
+          <div style={S.adminGrid}>
+            {visibleItems.map(item => (
+              <div key={item.id}
+                style={{ ...S.adminCard, cursor: "grab", borderTop: "2px solid transparent" }}
+                draggable
+                onDragStart={e => { e.dataTransfer.setData("itemId", String(item.id)); e.currentTarget.style.opacity = "0.5"; }}
+                onDragEnd={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.borderTop = "2px solid transparent"; }}
+                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderTop = "2px solid #C4522A"; }}
+                onDragLeave={e => { e.currentTarget.style.borderTop = "2px solid transparent"; }}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.currentTarget.style.borderTop = "2px solid transparent";
+                  const fromId = Number(e.dataTransfer.getData("itemId"));
+                  const toId = item.id;
+                  if (fromId === toId) return;
+                  setLocalItems(prev => {
+                    const arr = [...prev];
+                    const fromIdx = arr.findIndex(i => i.id === fromId);
+                    const toIdx = arr.findIndex(i => i.id === toId);
+                    if (fromIdx === -1 || toIdx === -1) return prev;
+                    const [moved] = arr.splice(fromIdx, 1);
+                    arr.splice(toIdx, 0, moved);
+                    return arr;
+                  });
+                  markDirty();
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "8px" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#B0A898", marginTop: "2px", flexShrink: 0 }}>⠿</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={S.adminLabel}>Name</div>
+                    <input style={{ ...S.adminInput, fontWeight: 500 }} value={item.name}
+                      onChange={e => updateItem(item.id, "name", e.target.value)} />
+                  </div>
+                  <button onClick={() => deleteItem(item.id)} style={{ ...S.adminDeleteBtn, flexShrink: 0, marginTop: "18px" }}>✕</button>
+                </div>
+                <div>
+                  <div style={S.adminLabel}>Room / Category</div>
+                  <input style={S.adminInput} list="room-options-edit" value={item.room}
+                    onChange={e => updateItem(item.id, "room", e.target.value)} placeholder="Select or type new" />
+                  <datalist id="room-options-edit">{allRooms.map(r => <option key={r} value={r} />)}</datalist>
+                </div>
+                <div>
+                  <div style={S.adminLabel}>Status</div>
+                  <select style={S.adminSelect} value={item.status} onChange={e => updateItem(item.id, "status", e.target.value)}>
+                    <option value="available">Available</option>
+                    <option value="deposit">Deposit Taken</option>
+                    <option value="sold">Sold</option>
+                  </select>
+                </div>
+                <div style={S.adminRow}>
+                  <div><div style={S.adminLabel}>Sale Price $</div><input style={S.adminInput} type="number" value={item.sale} onChange={e => updateItem(item.id, "sale", Number(e.target.value))} /></div>
+                  <div><div style={S.adminLabel}>Deposit $</div><input style={S.adminInput} type="number" value={item.deposit} onChange={e => updateItem(item.id, "deposit", Number(e.target.value))} /></div>
+                </div>
+                <div><div style={S.adminLabel}>Photo URL</div><input style={S.adminInput} value={item.photo} onChange={e => updateItem(item.id, "photo", normalizeUrl(e.target.value))} placeholder="https://… (Dropbox auto-converted)" /></div>
+                <div><div style={S.adminLabel}>Product Link</div><input style={S.adminInput} value={item.link} onChange={e => updateItem(item.id, "link", e.target.value)} placeholder="https://…" /></div>
+                <label style={{ fontSize: "0.75rem", color: "#6B6B65", display: "flex", gap: "6px", alignItems: "center" }}>
+                  <input type="checkbox" checked={item.large} onChange={e => updateItem(item.id, "large", e.target.checked)} />
+                  Large item (requires deposit + pickup)
+                </label>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ padding: "20px", textAlign: "center" }}>
+            <button onClick={handleSave} disabled={saveState === "saving" || (!isDirty && saveState !== "error")}
+              style={{ ...S.adminSaveBtn(saveState), padding: "10px 32px", fontSize: "0.85rem", opacity: (!isDirty && saveState === "idle") ? 0.5 : 1 }}>
+              {saveBtnLabel}
+            </button>
+          </div>
         </div>
-      </div>}
+      )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// ─── MOUNT ────────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
 </script>
 </body>
 </html>
