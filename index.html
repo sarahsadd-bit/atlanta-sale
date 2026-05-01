@@ -190,14 +190,14 @@ const db = {
 
   async getItems() {
     const r = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/sale_items?select=*&order=id.asc&limit=500`,
+      `${SUPABASE_URL}/rest/v1/sale_items?select=*&order=sort_order.asc,id.asc&limit=500`,
       { headers: { ...sbH, "Range-Unit": "items", "Range": "0-499" } }
     );
     if (!r.ok) throw new Error(`getItems failed: ${r.status}`);
     const data = await r.json();
     if (!Array.isArray(data)) throw new Error("getItems: unexpected response shape");
     // Sanitize every item — defend against bad DB data crashing ItemCard
-    return data.map(item => ({
+    return data.map((item, i) => ({
       id: item.id || newId(),
       room: item.room || "Miscellaneous",
       name: item.name || "Unnamed Item",
@@ -208,20 +208,23 @@ const db = {
       status: VALID_STATUSES.includes(item.status) ? item.status : "available",
       photo: normalizeUrl(item.photo || ""),
       link: item.link || "",
+      sort_order: item.sort_order !== undefined ? item.sort_order : i,
     }));
   },
 
   async saveItems(items) {
+    // Assign sort_order based on current array position
+    const withOrder = items.map((item, i) => ({ ...item, sort_order: i }));
     // Step 1: Delete all
     const del = await fetchWithTimeout(
       `${SUPABASE_URL}/rest/v1/sale_items`,
       { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
     );
     if (!del.ok) throw new Error(`saveItems delete failed: ${del.status} — ${await del.text()}`);
-    if (items.length === 0) return;
+    if (withOrder.length === 0) return;
     // Step 2: Insert in batches of 10
-    for (let i = 0; i < items.length; i += 10) {
-      const batch = items.slice(i, i + 10);
+    for (let i = 0; i < withOrder.length; i += 10) {
+      const batch = withOrder.slice(i, i + 10);
       const r = await fetchWithTimeout(
         `${SUPABASE_URL}/rest/v1/sale_items`,
         { method: "POST", headers: { ...sbH, "Prefer": "return=minimal" }, body: JSON.stringify(batch) }
