@@ -217,7 +217,7 @@ const db = {
     const withOrder = items.map((item, i) => ({ ...item, sort_order: i }));
     // Step 1: Delete all
     const del = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/sale_items`,
+      `${SUPABASE_URL}/rest/v1/sale_items?id=gte.0`,
       { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
     );
     if (!del.ok) throw new Error(`saveItems delete failed: ${del.status} — ${await del.text()}`);
@@ -268,7 +268,7 @@ const db = {
 
   async savePhotos(photos) {
     const del = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/apt_photos`,
+      `${SUPABASE_URL}/rest/v1/apt_photos?id=gte.0`,
       { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
     );
     if (!del.ok) throw new Error(`savePhotos delete failed: ${del.status} — ${await del.text()}`);
@@ -319,7 +319,7 @@ const db = {
 
   async saveSettings(settings) {
     const del = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/site_settings`,
+      `${SUPABASE_URL}/rest/v1/site_settings?id=gte.0`,
       { method: "DELETE", headers: { ...sbH, "Prefer": "return=minimal" } }
     );
     if (!del.ok) throw new Error(`saveSettings delete failed: ${del.status}`);
